@@ -20,6 +20,9 @@ async def on_message(msg_in):
     if msg_in.author == client.user:
         return
 
+    if msg_in.author.bot:
+        return
+
     if msg_in.content.startswith(LISTEN_TO):
         txt_channel = msg_in.channel
         params = msg_in.content.split()
