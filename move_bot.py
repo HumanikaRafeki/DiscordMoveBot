@@ -1,19 +1,58 @@
 import os
 import io
+import json
 import discord
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
+STATS_TOKEN = os.getenv('STATS_TOKEN')
 LISTEN_TO = os.getenv('LISTEN_TO')
+ADMIN_ID = os.getenv('BLACKRAINBOW_UID')
+BOT_ID = os.getenv('MOVEBOT_ID')
 
 intents = discord.Intents.all()
 client = discord.Client(intents=intents)
+
 
 @client.event
 async def on_ready():
     print(f'{client.user} has connected to Discord!')
     await client.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f'for spoilers | {LISTEN_TO} help'))
+
+    global admin
+    admin = await client.fetch_user(user_id=ADMIN_ID)
+
+@client.event
+async def on_guild_join(guild):
+    url=f'https://discordbotlist.com/api/v1/bots/{BOT_ID}/stats'
+    headers = {
+        "Authorization": STATS_TOKEN,
+        "Content-Type": 'application/json'
+    }
+    payload = json.dumps({
+        "guilds": len(client.guilds)
+    })
+    requests.request("POST", url, headers=headers, data=payload)
+
+    notify_me = f'MoveBot was added to {guild.name} ({guild.member_count} members)! Currently in {len(client.guilds)} servers.'
+    await admin.send(notify_me)
+
+@client.event
+async def on_guild_remove(guild):
+    url=f'https://discordbotlist.com/api/v1/bots/{BOT_ID}/stats'
+    headers = {
+        "Authorization": STATS_TOKEN,
+        "Content-Type": 'application/json'
+    }
+    payload = json.dumps({
+        "guilds": len(client.guilds)
+    })
+    requests.request("POST", url, headers=headers, data=payload)
+
+    notify_me = f'MoveBot was removed from {guild.name} ({guild.member_count} members)! Currently in {len(client.guilds)} servers.'
+    await admin.send(notify_me)
 
 @client.event
 async def on_message(msg_in):
