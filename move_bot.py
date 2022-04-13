@@ -8,11 +8,13 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 STATS_TOKEN = os.getenv('STATS_TOKEN')
+STATS_ID = os.getenv('MOVEBOT_STATS_ID')
 LISTEN_TO = os.getenv('LISTEN_TO')
-ADMIN_ID = os.getenv('BLACKRAINBOW_UID')
+ADMIN_ID = os.getenv('ADMIN_UID')
 BOT_ID = os.getenv('MOVEBOT_ID')
 
-intents = discord.Intents.all()
+intents = discord.Intents.default()
+intents.members = True
 client = discord.Client(intents=intents)
 
 
@@ -26,7 +28,7 @@ async def on_ready():
 
 @client.event
 async def on_guild_join(guild):
-    url=f'https://discordbotlist.com/api/v1/bots/{BOT_ID}/stats'
+    url=f'https://discordbotlist.com/api/v1/bots/{STATS_ID}/stats'
     headers = {
         "Authorization": STATS_TOKEN,
         "Content-Type": 'application/json'
@@ -41,7 +43,7 @@ async def on_guild_join(guild):
 
 @client.event
 async def on_guild_remove(guild):
-    url=f'https://discordbotlist.com/api/v1/bots/{BOT_ID}/stats'
+    url=f'https://discordbotlist.com/api/v1/bots/{STATS_ID}/stats'
     headers = {
         "Authorization": STATS_TOKEN,
         "Content-Type": 'application/json'
@@ -89,7 +91,7 @@ async def on_message(msg_in):
                         moved_msg = await txt_channel.fetch_message(msg_in.reference.message_id)
                         channel_param = 1
                     else:
-                        moved_msg = await txt_channel.fetch_message(params[2])
+                        moved_msg = await txt_channel.fetch_message(params[1])
                 except:
                     error_msg = error_msg + 'An invalid message ID was provided. You can ignore the message ID by executing the **move** command as a reply to the target message'
 
