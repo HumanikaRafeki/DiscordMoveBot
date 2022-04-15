@@ -46,7 +46,7 @@ intents.message_content = True
 client = discord.Client(intents=intents)
 
 @client.event
-async def on_ready():
+async def on_connect():
     print(f'{client.user} has connected to Discord!')
     await client.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f'for spoilers | {LISTEN_TO} help'))
 
@@ -93,7 +93,7 @@ async def on_message(msg_in):
 
     guild_id = msg_in.guild.id
     txt_channel = msg_in.channel
-    if msg_in.content.startswith("!mv reset"):
+    if msg_in.content.startswith(f'{LISTEN_TO} reset'):
         with sqlite3.connect("settings.db") as connection:
             connection.row_factory = sqlite3.Row
             with closing(connection.cursor()) as cursor:
