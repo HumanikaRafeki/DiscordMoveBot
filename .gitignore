@@ -1,2 +1,5 @@
 .env
 move_env/
+venv/
+.idea/
+*.db
