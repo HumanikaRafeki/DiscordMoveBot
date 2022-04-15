@@ -108,22 +108,33 @@ async def on_message(msg_in):
         # !mv help
         if len(params) < 2 or params[1] == 'help':
             e = discord.Embed(title="MoveBot Help")
-            e.description = \
-                "This bot can move messages in two different ways.\n" + \
-                "*Moving messages requires to have the 'Manage messages' permission.*\n\n" + \
-                "**Method 1: Using the target message's ID**\n" + \
-                "!mv [messageID] [#targetChannelOrThread] [optional message]\n\n" + \
-                "**Method 2: Replying to the target message**\n" + \
-                "!mv [#targetChannelOrThread] [optional message]\n\n" + \
-                "**Preferences**\n" + \
-                "You can set bot preferences like so:\n" + \
-                "!mv pref [preference name] [preference value]\n\n" + \
-                "name: notify_dm\n" + \
-                "value: '0' (Sends move message in channel) '1' (Sends move message as a DM)\n\n" + \
-                "name: move_message\n" + \
-                "value: main message sent to the user.\n" + \
-                "variables: MESSAGE_USER, DESTINATION_CHANNEL, MOVER_USER\n\n" + \
-                "*Feel free to contact **N3X4S#6792** for any question or suggestion!*"
+            e.description = """
+                This bot can move messages in two different ways.
+                *Moving messages requires to have the 'Manage messages' permission.*
+                
+                **Method 1: Using the target message's ID**
+                `!mv [messageID] [#targetChannelOrThread] [optional message]`
+                **example:** `!mv 964656189155737620 #general This message belongs in general.`
+                
+                **Method 2: Replying to the target message**
+                `!mv [#targetChannelOrThread] [optional message]`
+                **example:** `!mv #general This message belongs in general.`
+                
+                **Preferences**
+                You can set bot preferences like so:
+                `!mv pref [preference name] [preference value]`
+                
+                **name:** `notify_dm`
+                **value:** `0` (Sends move message in channel) `1` (Sends move message as a DM)
+                **example:** `!mv pref notify_dm 1`
+                
+                **name:** `move_message`
+                **value:** main message sent to the user.
+                **variables:** `MESSAGE_USER`, `DESTINATION_CHANNEL`, `MOVER_USER`
+                **example:** `!mv pref send_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`
+                
+                **Head over to https://discord.gg/t5N754rmC6 for any questions or suggestions!**
+            """
             await msg_in.author.send(embed=e)
 
         # !mv pref [pref_name] [pref_value]
