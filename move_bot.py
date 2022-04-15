@@ -92,6 +92,7 @@ async def on_message(msg_in):
         return
 
     guild_id = msg_in.guild.id
+    txt_channel = msg_in.channel
     if msg_in.content.startswith("!mv reset"):
         with sqlite3.connect("settings.db") as connection:
             connection.row_factory = sqlite3.Row
@@ -99,8 +100,8 @@ async def on_message(msg_in):
                 cursor.execute("DELETE FROM prefs WHERE guild_id = ?", (guild_id,))
         if guild_id in prefs:
             prefs.pop(guild_id)
-    if msg_in.content.startswith(LISTEN_TO):
-        txt_channel = msg_in.channel
+        await txt_channel.send("All preferences reset to default")
+    elif msg_in.content.startswith(LISTEN_TO):
         params = msg_in.content.split(maxsplit=3)
 
         # !mv help
