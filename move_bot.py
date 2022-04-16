@@ -232,7 +232,7 @@ async def on_message(msg_in):
         notify_dm = get_pref(guild_id, "notify_dm")
         send_obj = None
         if notify_dm == "1":
-            send_obj = msg_in.author
+            send_obj = moved_msg.author
         elif notify_dm != "2":
             send_obj = txt_channel
         if send_obj is not None:
