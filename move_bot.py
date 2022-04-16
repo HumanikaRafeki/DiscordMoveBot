@@ -114,24 +114,37 @@ async def on_message(msg_in):
                 
                 **Method 1: Using the target message's ID**
                 `!mv [messageID] [#targetChannelOrThread] [optional message]`
-                **example:** `!mv 964656189155737620 #general This message belongs in general.`
+                
+                **examples:**
+                `!mv 964656189155737620 #general` 
+                `!mv 964656189155737620 #general This message belongs in general.`
                 
                 **Method 2: Replying to the target message**
                 `!mv [#targetChannelOrThread] [optional message]`
-                **example:** `!mv #general This message belongs in general.`
+                
+                **examples:** 
+                `!mv #general`
+                `!mv #general This message belongs in general.`
                 
                 **Preferences**
                 You can set bot preferences like so:
                 `!mv pref [preference name] [preference value]`
                 
                 **name:** `notify_dm`
-                **value:** `0` (Sends move message in channel) `1` (Sends move message as a DM)
-                **example:** `!mv pref notify_dm 1`
+                **value:** 
+                 `0`  Sends move message in channel 
+                 `1`  Sends move message as a DM 
+                 `2`  Don't send any message
+                
+                **example:** 
+                `!mv pref notify_dm 1`
                 
                 **name:** `move_message`
                 **value:** main message sent to the user.
                 **variables:** `MESSAGE_USER`, `DESTINATION_CHANNEL`, `MOVER_USER`
-                **example:** `!mv pref send_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`
+                
+                **example:** 
+                `!mv pref send_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`
                 
                 **Head over to https://discord.gg/t5N754rmC6 for any questions or suggestions!**
             """
@@ -197,9 +210,10 @@ async def on_message(msg_in):
                             .replace("MOVER_USER", f"<@!{msg_in.author.id}>")
 
                         notice_msg = f'{notice_msg}{extra}'
-                        if guild_id in prefs and "notify_dm" in prefs[guild_id] and prefs[guild_id]["notify_dm"] == "1":
+                        notify_dm = prefs[guild_id]["notify_dm"] if guild_id in prefs and "notify_dm" in prefs[guild_id] else "0"
+                        if notify_dm == "1":
                             await msg_in.author.send(notice_msg)
-                        else:
+                        elif notify_dm != "2":
                             await txt_channel.send(notice_msg)
                         await msg_in.delete()
                         await moved_msg.delete()
