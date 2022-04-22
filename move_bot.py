@@ -18,9 +18,40 @@ LISTEN_TO = os.getenv('LISTEN_TO')
 ADMIN_ID = os.getenv('ADMIN_UID')
 BOT_ID = os.getenv('MOVEBOT_ID')
 
-available_prefs = ["notify_dm", "move_message"]
-default_msg = "MESSAGE_USER, your message has been moved to DESTINATION_CHANNEL by MOVER_USER"
+available_prefs = {
+    "notify_dm": "0",
+    "embed_message": "0",
+    "move_message": "MESSAGE_USER, your message has been moved to DESTINATION_CHANNEL by MOVER_USER"
+}
+pref_help = {
+    "notify_dm": """
+**name:** `notify_dm`
+**value:** 
+ `0`  Sends move message in channel 
+ `1`  Sends move message as a DM 
+ `2`  Don't send any message
 
+**example:** 
+`!mv pref notify_dm 1`
+    """,
+    "embed_message": """
+**name:** `embed_message`
+**value:** 
+ `0`  Does not embed move message 
+ `1`  Embeds move message
+
+**example:** 
+`!mv pref embed_message 1`
+    """,
+    "move_message": """
+**name:** `move_message`
+**value:** main message sent to the user.
+**variables:** `MESSAGE_USER`, `DESTINATION_CHANNEL`, `MOVER_USER`
+
+**example:** 
+`!mv pref send_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`
+    """,
+}
 prefs = {}
 with sqlite3.connect("settings.db") as connection:
     connection.row_factory = sqlite3.Row
@@ -39,6 +70,17 @@ with sqlite3.connect("settings.db") as connection:
             if g_id not in prefs:
                 prefs[g_id] = {}
             prefs[g_id][str(row["pref"])] = str(row["value"])
+
+def get_pref(guild_id, pref):
+    return prefs[guild_id][pref] if guild_id in prefs and pref in prefs[guild_id] else available_prefs[pref]
+
+pref_help_description = """
+**Preferences**
+You can set bot preferences like so:
+`!mv pref [preference name] [preference value]`
+"""
+for k, v in pref_help.items():
+    pref_help_description = pref_help_description + v
 
 intents = discord.Intents.default()
 intents.members = True
@@ -85,15 +127,43 @@ async def on_guild_remove(guild):
 
 @client.event
 async def on_message(msg_in):
-    if msg_in.author == client.user:
-        return
-
-    if msg_in.author.bot:
+    if msg_in.author == client.user or msg_in.author.bot \
+            or not msg_in.content.startswith(LISTEN_TO) \
+            or not msg_in.author.guild_permissions.manage_messages:
         return
 
     guild_id = msg_in.guild.id
     txt_channel = msg_in.channel
-    if msg_in.content.startswith(f'{LISTEN_TO} reset'):
+    is_reply = msg_in.reference is not None
+    params = msg_in.content.split(maxsplit=2 if is_reply else 3)
+
+    # !mv help
+    if len(params) < 2 or params[1] == 'help':
+        e = discord.Embed(title="MoveBot Help")
+        e.description = f"""
+            This bot can move messages in two different ways.
+            *Moving messages requires to have the 'Manage messages' permission.*
+            
+            **Method 1: Using the target message's ID**
+            `!mv [messageID] [#targetChannelOrThread] [optional message]`
+            
+            **examples:**
+            `!mv 964656189155737620 #general` 
+            `!mv 964656189155737620 #general This message belongs in general.`
+            
+            **Method 2: Replying to the target message**
+            `!mv [#targetChannelOrThread] [optional message]`
+            
+            **examples:** 
+            `!mv #general`
+            `!mv #general This message belongs in general.`
+            {pref_help_description}
+            **Head over to https://discord.gg/t5N754rmC6 for any questions or suggestions!**"
+        """
+        await msg_in.author.send(embed=e)
+
+    # !mv reset
+    elif params[1] == "reset":
         with sqlite3.connect("settings.db") as connection:
             connection.row_factory = sqlite3.Row
             with closing(connection.cursor()) as cursor:
@@ -101,103 +171,85 @@ async def on_message(msg_in):
         if guild_id in prefs:
             prefs.pop(guild_id)
         await txt_channel.send("All preferences reset to default")
-    elif msg_in.content.startswith(LISTEN_TO):
-        params = msg_in.content.split(maxsplit=3)
 
-        # !mv help
-        if len(params) < 2 or params[1] == 'help':
-            e = discord.Embed(title="MoveBot Help")
-            e.description = \
-                "This bot can move messages in two different ways.\n" + \
-                "*Moving messages requires to have the 'Manage messages' permission.*\n\n" + \
-                "**Method 1: Using the target message's ID**\n" + \
-                "!mv [messageID] [#targetChannelOrThread] [optional message]\n\n" + \
-                "**Method 2: Replying to the target message**\n" + \
-                "!mv [#targetChannelOrThread] [optional message]\n\n" + \
-                "**Preferences**\n" + \
-                "You can set bot preferences like so:\n" + \
-                "!mv pref [preference name] [preference value]\n\n" + \
-                "name: notify_dm\n" + \
-                "value: '0' (Sends move message in channel) '1' (Sends move message as a DM)\n\n" + \
-                "name: move_message\n" + \
-                "value: main message sent to the user.\n" + \
-                "variables: MESSAGE_USER, DESTINATION_CHANNEL, MOVER_USER\n\n" + \
-                "*Feel free to contact **N3X4S#6792** for any question or suggestion!*"
-            await msg_in.author.send(embed=e)
-
-        # !mv pref [pref_name] [pref_value]
-        elif params[1] == "pref":
-            if len(params) == 2:
-                error_msg = f"No preference name was provided. Options: {', '.join(available_prefs)}"
-            elif len(params) < 4:
-                error_msg = "An invalid preference format was provided. !mv pref [preference name] [preference value]"
-            elif params[2] not in available_prefs:
-                error_msg = f"An invalid preference name was provided. Options: {', '.join(available_prefs)}"
-            else:
-                with sqlite3.connect("settings.db") as connection:
-                    connection.row_factory = sqlite3.Row
-                    with closing(connection.cursor()) as cursor:
-                        cursor.execute("INSERT OR IGNORE INTO prefs(guild_id, pref) VALUES(?, ?)", (guild_id, params[2]))
-                        cursor.execute(f"UPDATE prefs SET value = ? WHERE guild_id = ? AND pref = ?", (params[3], guild_id, params[2]))
-                if guild_id not in prefs:
-                    prefs[guild_id] = {}
-                prefs[guild_id][params[2]] = params[3]
-                error_msg = f"Pref: {params[2]} Updated to {params[3]}"
-            await txt_channel.send(error_msg)
-
-        # !mv [msgID] [#channel] [optional message]
+    # !mv pref [pref_name] [pref_value]
+    elif params[1] == "pref":
+        title = "Preference Help"
+        if len(params) == 2 or params[2] == "?":
+            response_msg = pref_help_description
+        elif len(params) > 2 and params[2] not in available_prefs:
+            title = "Invalid Preference"
+            response_msg = f"An invalid preference name was provided.\n{pref_help_description}"
+        elif len(params) == 3:
+            title = "Current Preference"
+            response_msg = f"`{params[2]}`: `{get_pref(guild_id, params[2])}`"
+        elif params[3] == "?":
+            response_msg = pref_help[params[2]]
         else:
-            if msg_in.author.guild_permissions.manage_messages:
-                error_msg = ''
-                channel_param = 2
-                try:
-                    if msg_in.reference is not None:
-                        moved_msg = await txt_channel.fetch_message(msg_in.reference.message_id)
-                        channel_param = 1
-                    else:
-                        moved_msg = await txt_channel.fetch_message(params[1])
-                except:
-                    error_msg = error_msg + 'An invalid message ID was provided. You can ignore the message ID by executing the **move** command as a reply to the target message'
+            title = "Preference Updated"
+            with sqlite3.connect("settings.db") as connection:
+                connection.row_factory = sqlite3.Row
+                with closing(connection.cursor()) as cursor:
+                    cursor.execute("INSERT OR IGNORE INTO prefs(guild_id, pref) VALUES(?, ?)", (guild_id, params[2]))
+                    cursor.execute(f"UPDATE prefs SET value = ? WHERE guild_id = ? AND pref = ?", (params[3], guild_id, params[2]))
+            if guild_id not in prefs:
+                prefs[guild_id] = {}
+            prefs[guild_id][params[2]] = params[3]
+            response_msg = f"**Preference:** `{params[2]}` Updated to `{params[3]}`"
+        e = discord.Embed(title=title)
+        e.description = response_msg
+        await txt_channel.send(embed=e)
 
-                try:
-                    target_channel = msg_in.guild.get_channel_or_thread(int(params[channel_param].strip('<#').strip('>')))
-                except:
-                    error_msg = error_msg + "An invalid channel was provided. "
+    # !mv [msgID] [#channel] [optional message]
+    else:
+        channel_param = 1 if is_reply else 2
+        extra_param = channel_param + 1
+        try:
+            moved_msg = await txt_channel.fetch_message(msg_in.reference.message_id if is_reply else params[1])
+        except:
+            await txt_channel.send('An invalid message ID was provided. You can ignore the message ID by executing the **move** command as a reply to the target message')
+            return
+        try:
+            target_channel = msg_in.guild.get_channel_or_thread(int(params[channel_param].strip('<#').strip('>')))
+        except:
+            await txt_channel.send("An invalid channel or thread was provided.")
+            return
+        r = Route('POST', '/channels/{channel_id}/webhooks', channel_id=target_channel.parent_id if isinstance(target_channel, Thread) else target_channel.id)
+        data = await target_channel._state.http.request(r, json={'name': str(moved_msg.author.display_name)})
+        wb = Webhook.from_state(data, state=target_channel._state)
+        files = []
+        for file in moved_msg.attachments:
+            f = io.BytesIO()
+            await file.save(f)
+            files.append(discord.File(f, filename=file.filename))
 
-                if error_msg:
-                    await txt_channel.send(error_msg)
-                else:
-                    r = Route('POST', '/channels/{channel_id}/webhooks', channel_id=target_channel.parent_id if isinstance(target_channel, Thread) else target_channel.id)
-                    data = await target_channel._state.http.request(r, json={'name': str(moved_msg.author.display_name)})
-                    wb = Webhook.from_state(data, state=target_channel._state)
-                    files = []
-                    for file in moved_msg.attachments:
-                        f = io.BytesIO()
-                        await file.save(f)
-                        files.append(discord.File(f, filename=file.filename))
+        if isinstance(target_channel, Thread):
+            await wb.send(content=moved_msg.content, avatar_url=moved_msg.author.avatar, embeds=moved_msg.embeds, files=files, thread=target_channel)
+        else:
+            await wb.send(content=moved_msg.content, avatar_url=moved_msg.author.avatar, embeds=moved_msg.embeds, files=files)
+        await wb.delete()
 
-                    if isinstance(target_channel, Thread):
-                        await wb.send(content=moved_msg.content, avatar_url=moved_msg.author.avatar, embeds=moved_msg.embeds, files=files, thread=target_channel)
-                    else:
-                        await wb.send(content=moved_msg.content, avatar_url=moved_msg.author.avatar, embeds=moved_msg.embeds, files=files)
-                    await wb.delete()
-
-                    extra = f'\n\n{params[channel_param + 1]}' if len(params) > channel_param + 1 else ''
-                    if guild_id in prefs and "move_message" in prefs[guild_id] and prefs[guild_id]["move_message"]:
-                        notice_msg = prefs[guild_id]["move_message"]
-                    else:
-                        notice_msg = default_msg
-                    notice_msg = notice_msg.replace("MESSAGE_USER", f"<@!{moved_msg.author.id}>") \
-                        .replace("DESTINATION_CHANNEL", params[channel_param]) \
-                        .replace("MOVER_USER", f"<@!{msg_in.author.id}>")
-
-                    notice_msg = f'{notice_msg}{extra}'
-                    if guild_id in prefs and "notify_dm" in prefs[guild_id] and prefs[guild_id]["notify_dm"] == "1":
-                        await msg_in.author.send(notice_msg)
-                    else:
-                        await txt_channel.send(notice_msg)
-                    await msg_in.delete()
-                    await moved_msg.delete()
+        notify_dm = get_pref(guild_id, "notify_dm")
+        send_obj = None
+        if notify_dm == "1":
+            send_obj = moved_msg.author
+        elif notify_dm != "2":
+            send_obj = txt_channel
+        if send_obj is not None:
+            description = get_pref(guild_id, "move_message") \
+                .replace("MESSAGE_USER", f"<@!{moved_msg.author.id}>") \
+                .replace("DESTINATION_CHANNEL", params[channel_param]) \
+                .replace("MOVER_USER", f"<@!{msg_in.author.id}>")
+            description = f'{description}\n\n{params[extra_param]}' if len(params) > extra_param else description
+            embed = get_pref(guild_id, "embed_message") == "1"
+            if embed:
+                e = discord.Embed(title="Message Moved")
+                e.description = description
+                await send_obj.send(embed=e)
+            else:
+                await send_obj.send(description)
+        await msg_in.delete()
+        await moved_msg.delete()
 
 #end
 client.run(TOKEN)
