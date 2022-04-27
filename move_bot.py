@@ -1,3 +1,4 @@
+from concurrent.futures import thread
 import os
 import io
 import json
@@ -48,7 +49,7 @@ client = discord.Client(intents=intents)
 @client.event
 async def on_connect():
     print(f'{client.user} has connected to Discord!')
-    await client.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f'for spoilers | {LISTEN_TO} help'))
+    await client.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f'for spoilers | !mv help'))
 
     global admin
     admin = await client.fetch_user(int(ADMIN_ID))
@@ -167,9 +168,19 @@ async def on_message(msg_in):
                 if error_msg:
                     await txt_channel.send(error_msg)
                 else:
-                    r = Route('POST', '/channels/{channel_id}/webhooks', channel_id=target_channel.parent_id if isinstance(target_channel, Thread) else target_channel.id)
-                    data = await target_channel._state.http.request(r, json={'name': str(moved_msg.author.display_name)})
-                    wb = Webhook.from_state(data, state=target_channel._state)
+                    wb = None
+                    wbhks = await msg_in.guild.webhooks()
+                    for wbhk in wbhks:
+                        if wbhk.name == 'MoveBot':
+                            wb = wbhk
+
+                    parent_channel = target_channel.parent if isinstance(target_channel, Thread) else target_channel
+                    if wb == None:
+                        wb = await parent_channel.create_webhook(name='MoveBot', reason='Required webhook for MoveBot to function.')
+                    else:
+                        if wb.channel != parent_channel:
+                            await wb.edit(channel=parent_channel)
+
                     files = []
                     for file in moved_msg.attachments:
                         f = io.BytesIO()
@@ -177,10 +188,9 @@ async def on_message(msg_in):
                         files.append(discord.File(f, filename=file.filename))
 
                     if isinstance(target_channel, Thread):
-                        await wb.send(content=moved_msg.content, avatar_url=moved_msg.author.avatar, embeds=moved_msg.embeds, files=files, thread=target_channel)
+                        await wb.send(content=moved_msg.content, username=moved_msg.author.display_name, avatar_url=moved_msg.author.avatar, embeds=moved_msg.embeds, files=files, thread=target_channel)
                     else:
-                        await wb.send(content=moved_msg.content, avatar_url=moved_msg.author.avatar, embeds=moved_msg.embeds, files=files)
-                    await wb.delete()
+                        await wb.send(content=moved_msg.content, username=moved_msg.author.display_name, avatar_url=moved_msg.author.avatar, embeds=moved_msg.embeds, files=files)
 
                     extra = f'\n\n{params[channel_param + 1]}' if len(params) > channel_param + 1 else ''
                     if guild_id in prefs and "move_message" in prefs[guild_id] and prefs[guild_id]["move_message"]:
