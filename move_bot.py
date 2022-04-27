@@ -49,7 +49,7 @@ client = discord.Client(intents=intents)
 @client.event
 async def on_connect():
     print(f'{client.user} has connected to Discord!')
-    await client.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f'for spoilers | !mv help'))
+    await client.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f'for spoilers | {LISTEN_TO} help'))
 
     global admin
     admin = await client.fetch_user(int(ADMIN_ID))
