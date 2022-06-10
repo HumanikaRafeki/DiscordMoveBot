@@ -12,13 +12,16 @@ from discord.webhook import Webhook
 from dotenv import load_dotenv
 import logging
 
+load_dotenv()
+
+LOG_PATH = os.getenv('LOG_PATH')
+
 logger = logging.getLogger('discord')
 logger.setLevel(logging.DEBUG)
-handler = logging.FileHandler(filename='movebot.log', encoding='UTF-8', mode='w')
+handler = logging.FileHandler(filename=LOG_PATH, encoding='UTF-8', mode='w')
 handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
 logger.addHandler(handler)
 
-load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 STATS_TOKEN = os.getenv('STATS_TOKEN')
 STATS_ID = os.getenv('MOVEBOT_STATS_ID')
