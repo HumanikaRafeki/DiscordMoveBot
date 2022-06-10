@@ -18,6 +18,7 @@ STATS_ID = os.getenv('MOVEBOT_STATS_ID')
 LISTEN_TO = os.getenv('LISTEN_TO')
 ADMIN_ID = os.getenv('ADMIN_UID')
 BOT_ID = os.getenv('MOVEBOT_ID')
+DB_PATH = os.getenv('DB_PATH') 
 
 available_prefs = {
     "notify_dm": "0",
@@ -54,7 +55,7 @@ pref_help = {
     """,
 }
 prefs = {}
-with sqlite3.connect("settings.db") as connection:
+with sqlite3.connect(DB_PATH) as connection:
     connection.row_factory = sqlite3.Row
     with closing(connection.cursor()) as cursor:
         cursor.execute(
@@ -188,7 +189,7 @@ async def on_message(msg_in):
             response_msg = pref_help[params[2]]
         else:
             title = "Preference Updated"
-            with sqlite3.connect("settings.db") as connection:
+            with sqlite3.connect(DB_PATH) as connection:
                 connection.row_factory = sqlite3.Row
                 with closing(connection.cursor()) as cursor:
                     cursor.execute("INSERT OR IGNORE INTO prefs(guild_id, pref) VALUES(?, ?)", (guild_id, params[2]))
