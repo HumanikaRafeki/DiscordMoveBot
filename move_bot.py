@@ -10,6 +10,13 @@ from discord import Thread
 from discord.http import Route
 from discord.webhook import Webhook
 from dotenv import load_dotenv
+import logging
+
+logger = logging.getLogger('discord')
+logger.setLevel(logging.DEBUG)
+handler = logging.FileHandler(filename='movebot.log', encoding='UTF-8', mode='w')
+handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
+logger.addHandler(handler)
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -23,7 +30,8 @@ DB_PATH = os.getenv('DB_PATH')
 available_prefs = {
     "notify_dm": "0",
     "embed_message": "0",
-    "move_message": "MESSAGE_USER, your message has been moved to DESTINATION_CHANNEL by MOVER_USER"
+    "move_message": "MESSAGE_USER, your message has been moved to DESTINATION_CHANNEL by MOVER_USER",
+    "strip_ping": "0"
 }
 pref_help = {
     "notify_dm": """
@@ -52,6 +60,14 @@ pref_help = {
 
 **example:**
 `!mv pref send_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`
+
+**name:** `strip_ping`
+**value:**
+`0` Do not strip pings
+`1` Strip 'everyone' and 'here' pings
+
+**example:**
+`!mv pref strip_ping 1`
     """,
 }
 prefs = {}
@@ -217,6 +233,11 @@ async def on_message(msg_in):
         except:
             await txt_channel.send("An invalid channel or thread was provided.")
             return
+
+        strip_ping = get_pref(guild_id, "strip_ping")
+        if strip_ping == "1" and '@' in moved_msg.content:
+            moved_msg.content = moved_msg.content.replace('@','@\u200b')
+            print('everyone striped from msg_in')
 
         wb = None
         wbhks = await msg_in.guild.webhooks()
