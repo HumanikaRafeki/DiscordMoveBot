@@ -170,6 +170,7 @@ async def on_message(msg_in):
             `!mv 964656189155737620 #general This message belongs in general.`
             `!mv 964656189155737620 +2 #general This message and the 2 after it belongs in general.`
             `!mv 964656189155737620 -3 #general This message and the 3 before it belongs in general.`
+            `!mv 964656189155737620 ~964656189155737640 #general This message until 964656189155737640 belongs in general.`
 
             **Method 2: Replying to the target message**
             `!mv [optional multi-move] [#targetChannelOrThread] [optional message]`
@@ -179,6 +180,7 @@ async def on_message(msg_in):
             `!mv #general This message belongs in general.`
             `!mv +2 #general This message and the 2 after it belongs in general.`
             `!mv -3 #general This message and the 3 before it belongs in general.`
+            `!mv ~964656189155737640 #general This message until 964656189155737640 belongs in general.`
             {pref_help_description}
             **Head over to https://discord.gg/t5N754rmC6 for any questions or suggestions!**"
         """
@@ -234,13 +236,37 @@ async def on_message(msg_in):
         channel_param = 1 if is_reply else 2
         before_messages = []
         after_messages = []
-        if params[channel_param].startswith(('+', '-')):
+        if params[channel_param].startswith(('+', '-', '~')):
             value = int(params[channel_param][1:])
             if params[channel_param][0] == '-':
                 before_messages = [m async for m in txt_channel.history(limit=value, before=moved_msg)]
                 before_messages.reverse()
-            else:
+            elif params[channel_param][0] == '+':
                 after_messages = [m async for m in txt_channel.history(limit=value, after=moved_msg)]
+            else:
+                try:
+                    await txt_channel.fetch_message(value)
+                except:
+                    await txt_channel.send('An invalid destination message ID was provided.')
+                    return
+
+                limit = 100
+                while True:
+                    found = False
+                    test_messages = [m async for m in txt_channel.history(limit=limit, after=moved_msg)]
+                    for i, msg in enumerate(test_messages):
+                        print(msg.id)
+                        if msg.id == value:
+                            after_messages = test_messages[:i+1]
+                            found = True
+                            break
+                        elif msg.id == txt_channel.last_message.id:
+                            await txt_channel.send('Reached the latest message without finding the destination message ID.')
+                            return
+                    if found:
+                        break
+                    limit += 100
+
             channel_param += 1
             leftovers = params[channel_param].split(maxsplit=1)
             dest_channel = leftovers[0]
