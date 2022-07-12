@@ -255,8 +255,9 @@ async def on_message(msg_in):
                     found = False
                     test_messages = [m async for m in txt_channel.history(limit=limit, after=moved_msg)]
                     for i, msg in enumerate(test_messages):
-                        print(msg.id)
-                        if msg.id == value:
+                        if msg.is_system():
+                            test_messages.pop(i)
+                        elif msg.id == value:
                             after_messages = test_messages[:i+1]
                             found = True
                             break
