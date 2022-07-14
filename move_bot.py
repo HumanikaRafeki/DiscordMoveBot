@@ -30,7 +30,7 @@ DB_PATH = os.getenv('DB_PATH')
 available_prefs = {
     "notify_dm": "0",
     "embed_message": "0",
-    "move_message": "MESSAGE_USER, your message has been moved to DESTINATION_CHANNEL by MOVER_USER",
+    "move_message": "MESSAGE_USER, your messages were moved to DESTINATION_CHANNEL by MOVER_USER",
     "strip_ping": "0"
 }
 pref_help = {
@@ -59,7 +59,7 @@ pref_help = {
 **variables:** `MESSAGE_USER`, `DESTINATION_CHANNEL`, `MOVER_USER`
 
 **example:**
-`!mv pref send_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`
+`!mv pref move_message MESSAGE_USER, your messages belong in DESTINATION_CHANNEL and were moved by MOVER_USER`
 
 **name:** `strip_ping`
 **value:**
@@ -322,6 +322,8 @@ async def on_message(msg_in):
         if send_objs:
             for send_obj in send_objs:
                 if notify_dm == "1":
+                    if send_obj.bot:
+                        continue
                     message_users = f"<@!{send_obj.id}>"
                 elif len(author_ids) == 1:
                     message_users = author_ids[0]
