@@ -250,7 +250,9 @@ async def on_message(msg_in):
         else:
             if wb.channel != parent_channel:
                 await wb.edit(channel=parent_channel)
-
+        if msg.reactions:
+            global reactionss
+            reactionss = msg.reactions
         files = []
         for file in moved_msg.attachments:
             f = io.BytesIO()
@@ -261,7 +263,10 @@ async def on_message(msg_in):
             await wb.send(content=moved_msg.content, username=moved_msg.author.display_name, avatar_url=moved_msg.author.avatar, embeds=moved_msg.embeds, files=files, thread=target_channel)
         else:
             await wb.send(content=moved_msg.content, username=moved_msg.author.display_name, avatar_url=moved_msg.author.avatar, embeds=moved_msg.embeds, files=files)
-
+            if msg.reactions:
+                for r in reactionss:
+                    if not isinstance(r.emoji, discord.PartialEmoji):
+                        await send_message.add_reaction(r.emoji)
 
         notify_dm = get_pref(guild_id, "notify_dm")
         send_obj = None
