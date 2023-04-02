@@ -12,9 +12,13 @@ from discord.webhook import Webhook
 from dotenv import load_dotenv
 import logging
 
+load_dotenv()
+
+LOG_PATH = os.getenv('LOG_PATH')
+
 logger = logging.getLogger('discord')
 logger.setLevel(logging.DEBUG)
-handler = logging.FileHandler(filename='movebot.log', encoding='UTF-8', mode='w')
+handler = logging.FileHandler(filename=LOG_PATH, encoding='UTF-8', mode='w')
 handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
 logger.addHandler(handler)
 
@@ -25,6 +29,7 @@ STATS_ID = os.getenv('MOVEBOT_STATS_ID')
 LISTEN_TO = os.getenv('LISTEN_TO')
 ADMIN_ID = os.getenv('ADMIN_UID')
 BOT_ID = os.getenv('MOVEBOT_ID')
+DB_PATH = os.getenv('DB_PATH')
 
 available_prefs = {
     "notify_dm": "0",
@@ -70,7 +75,7 @@ pref_help = {
     """,
 }
 prefs = {}
-with sqlite3.connect("settings.db") as connection:
+with sqlite3.connect(DB_PATH) as connection:
     connection.row_factory = sqlite3.Row
     with closing(connection.cursor()) as cursor:
         cursor.execute(
@@ -102,7 +107,7 @@ for k, v in pref_help.items():
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
-client = discord.Client(intents=intents)
+client = discord.AutoShardedClient(intents=intents)
 
 @client.event
 async def on_connect():
@@ -162,18 +167,24 @@ async def on_message(msg_in):
             *Moving messages requires to have the 'Manage messages' permission.*
 
             **Method 1: Using the target message's ID**
-            `!mv [messageID] [#targetChannelOrThread] [optional message]`
+            `!mv [messageID] [optional multi-move] [#targetChannelOrThread] [optional message]`
 
             **examples:**
             `!mv 964656189155737620 #general`
             `!mv 964656189155737620 #general This message belongs in general.`
+            `!mv 964656189155737620 +2 #general This message and the 2 after it belongs in general.`
+            `!mv 964656189155737620 -3 #general This message and the 3 before it belongs in general.`
+            `!mv 964656189155737620 ~964656189155737640 #general This message until 964656189155737640 belongs in general.`
 
             **Method 2: Replying to the target message**
-            `!mv [#targetChannelOrThread] [optional message]`
+            `!mv [optional multi-move] [#targetChannelOrThread] [optional message]`
 
             **examples:**
             `!mv #general`
             `!mv #general This message belongs in general.`
+            `!mv +2 #general This message and the 2 after it belongs in general.`
+            `!mv -3 #general This message and the 3 before it belongs in general.`
+            `!mv ~964656189155737640 #general This message until 964656189155737640 belongs in general.`
             {pref_help_description}
             **Head over to https://discord.gg/t5N754rmC6 for any questions or suggestions!**"
         """
@@ -204,7 +215,7 @@ async def on_message(msg_in):
             response_msg = pref_help[params[2]]
         else:
             title = "Preference Updated"
-            with sqlite3.connect("settings.db") as connection:
+            with sqlite3.connect(DB_PATH) as connection:
                 connection.row_factory = sqlite3.Row
                 with closing(connection.cursor()) as cursor:
                     cursor.execute("INSERT OR IGNORE INTO prefs(guild_id, pref) VALUES(?, ?)", (guild_id, params[2]))
@@ -217,7 +228,7 @@ async def on_message(msg_in):
         e.description = response_msg
         await txt_channel.send(embed=e)
 
-    # !mv [msgID] [#channel] [optional message]
+    # !mv [msgID] [optional multi-move] [#channel] [optional message]
     else:
         channel_param = 1 if is_reply else 2
         extra_param = channel_param + 1
@@ -227,8 +238,51 @@ async def on_message(msg_in):
         except:
             await txt_channel.send('An invalid message ID was provided. You can ignore the message ID by executing the **move** command as a reply to the target message')
             return
+
+        channel_param = 1 if is_reply else 2
+        before_messages = []
+        after_messages = []
+        if params[channel_param].startswith(('+', '-', '~')):
+            value = int(params[channel_param][1:])
+            if params[channel_param][0] == '-':
+                before_messages = [m async for m in txt_channel.history(limit=value, before=moved_msg)]
+                before_messages.reverse()
+            elif params[channel_param][0] == '+':
+                after_messages = [m async for m in txt_channel.history(limit=value, after=moved_msg)]
+            else:
+                try:
+                    await txt_channel.fetch_message(value)
+                except:
+                    await txt_channel.send('An invalid destination message ID was provided.')
+                    return
+
+                limit = 100
+                while True:
+                    found = False
+                    test_messages = [m async for m in txt_channel.history(limit=limit, after=moved_msg)]
+                    for i, msg in enumerate(test_messages):
+                        print(msg.id)
+                        if msg.id == value:
+                            after_messages = test_messages[:i+1]
+                            found = True
+                            break
+                        elif msg.id == txt_channel.last_message.id:
+                            await txt_channel.send('Reached the latest message without finding the destination message ID.')
+                            return
+                    if found:
+                        break
+                    limit += 1000
+
+            channel_param += 1
+            leftovers = params[channel_param].split(maxsplit=1)
+            dest_channel = leftovers[0]
+            extra_message = f'\n\n{leftovers[1]}' if len(leftovers) > 1 else ''
+        else:
+            dest_channel = params[channel_param]
+            extra_message = f'\n\n{params[channel_param + 1]}' if len(params) > channel_param + 1 else ''
+
         try:
-            target_channel = msg_in.guild.get_channel_or_thread(int(params[channel_param].strip('<#').strip('>')))
+            target_channel = msg_in.guild.get_channel_or_thread(int(dest_channel.strip('<#').strip('>')))
         except:
             await txt_channel.send("An invalid channel or thread was provided.")
             return
@@ -245,50 +299,72 @@ async def on_message(msg_in):
                 wb = wbhk
 
         parent_channel = target_channel.parent if isinstance(target_channel, Thread) else target_channel
-        if wb == None:
+        if wb is None:
             wb = await parent_channel.create_webhook(name='MoveBot', reason='Required webhook for MoveBot to function.')
         else:
             if wb.channel != parent_channel:
                 await wb.edit(channel=parent_channel)
-        if msg.reactions:
+        if moved_msg.reactions:
             global reactionss
-            reactionss = msg.reactions
-        files = []
-        for file in moved_msg.attachments:
-            f = io.BytesIO()
-            await file.save(f)
-            files.append(discord.File(f, filename=file.filename))
+            reactionss = moved_msg.reactions
 
-        if isinstance(target_channel, Thread):
-            await wb.send(content=moved_msg.content, username=moved_msg.author.display_name, avatar_url=moved_msg.author.avatar, embeds=moved_msg.embeds, files=files, thread=target_channel)
-        else:
-            await wb.send(content=moved_msg.content, username=moved_msg.author.display_name, avatar_url=moved_msg.author.avatar, embeds=moved_msg.embeds, files=files)
-            if msg.reactions:
-                for r in reactionss:
-                    if not isinstance(r.emoji, discord.PartialEmoji):
-                        await send_message.add_reaction(r.emoji)
+        author_map = {}
+        strip_ping = get_pref(guild_id, "strip_ping")
+        for msg in before_messages + [moved_msg] + after_messages:
+            msg_content = msg.content.replace('@', '@\u200b') if strip_ping == "1" and '@' in msg.content else msg.content
+            files = []
+            for file in msg.attachments:
+                f = io.BytesIO()
+                await file.save(f)
+                files.append(discord.File(f, filename=file.filename))
+
+            if isinstance(target_channel, Thread):
+                sm = await wb.send(content=msg_content, username=msg.author.display_name, avatar_url=msg.author.avatar, embeds=msg.embeds, files=files, thread=target_channel, wait=True)
+                if moved_msg.reactions:
+                    for r in reactionss:
+                        if not isinstance(r.emoji, discord.PartialEmoji):
+                            await sm.add_reaction(r.emoji)
+
+            else:
+                sm = await wb.send(content=msg_content, username=msg.author.display_name, avatar_url=msg.author.avatar, embeds=msg.embeds, files=files, wait=True)
+                if moved_msg.reactions:
+                    for r in reactionss:
+                        if not isinstance(r.emoji, discord.PartialEmoji):
+                            await sm.add_reaction(r.emoji)
+
+            if msg.author.id not in author_map:
+                author_map[msg.author.id] = msg.author
 
         notify_dm = get_pref(guild_id, "notify_dm")
-        send_obj = None
+        authors = [author_map[a] for a in author_map]
+        author_ids = [f"<@!{a.id}>" for a in authors]
+        send_objs = []
         if notify_dm == "1":
-            send_obj = moved_msg.author
+            send_objs = authors
         elif notify_dm != "2":
-            send_obj = txt_channel
-        if send_obj is not None:
-            description = get_pref(guild_id, "move_message") \
-                .replace("MESSAGE_USER", f"<@!{moved_msg.author.id}>") \
-                .replace("DESTINATION_CHANNEL", params[channel_param]) \
-                .replace("MOVER_USER", f"<@!{msg_in.author.id}>")
-            description = f'{description}\n\n{params[extra_param]}' if len(params) > extra_param else description
-            embed = get_pref(guild_id, "embed_message") == "1"
-            if embed:
-                e = discord.Embed(title="Message Moved")
-                e.description = description
-                await send_obj.send(embed=e)
-            else:
-                await send_obj.send(description)
-        await msg_in.delete()
-        await moved_msg.delete()
+            send_objs = [txt_channel]
+        if send_objs:
+            for send_obj in send_objs:
+                if notify_dm == "1":
+                    message_users = f"<@!{send_obj.id}>"
+                elif len(author_ids) == 1:
+                    message_users = author_ids[0]
+                else:
+                    message_users = f'{", ".join(author_ids[:-1])}{"," if len(author_ids) > 2 else ""} and {author_ids[-1]}'
+                description = get_pref(guild_id, "move_message") \
+                    .replace("MESSAGE_USER", message_users) \
+                    .replace("DESTINATION_CHANNEL", dest_channel) \
+                    .replace("MOVER_USER", f"<@!{msg_in.author.id}>")
+                description = f'{description}{extra_message}'
+                embed = get_pref(guild_id, "embed_message") == "1"
+                if embed:
+                    e = discord.Embed(title="Message Moved")
+                    e.description = description
+                    await send_obj.send(embed=e)
+                else:
+                    await send_obj.send(description)
+        for msg in before_messages + [moved_msg, msg_in] + after_messages:
+            await msg.delete()
 
 #end
 client.run(TOKEN)
