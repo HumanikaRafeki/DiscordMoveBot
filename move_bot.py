@@ -1,3 +1,4 @@
+#!/usr/bin/python
 from concurrent.futures import thread
 import os
 import io
@@ -7,8 +8,6 @@ import requests
 import sqlite3
 from contextlib import closing
 from discord import Thread
-from discord.http import Route
-from discord.webhook import Webhook
 from dotenv import load_dotenv
 import logging
 
@@ -22,7 +21,6 @@ handler = logging.FileHandler(filename=LOG_PATH, encoding='UTF-8', mode='w')
 handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
 logger.addHandler(handler)
 
-load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 STATS_TOKEN = os.getenv('STATS_TOKEN')
 STATS_ID = os.getenv('MOVEBOT_STATS_ID')
@@ -35,7 +33,8 @@ available_prefs = {
     "notify_dm": "0",
     "embed_message": "0",
     "move_message": "MESSAGE_USER, your message has been moved to DESTINATION_CHANNEL by MOVER_USER",
-    "strip_ping": "0"
+    "strip_ping": "0",
+    "delete_original": "1"
 }
 pref_help = {
     "notify_dm": """
@@ -69,10 +68,20 @@ pref_help = {
 **value:**
 `0` Do not strip pings
 `1` Strip 'everyone' and 'here' pings
+`2` Strip all 'everyone', 'here', role.mentions, and member.mentions
 
 **example:**
 `!mv pref strip_ping 1`
-    """,
+
+**name:** `delete_original`
+**value**
+`0` Do not delete original (only copy)
+`1` Delete original message (default)
+
+**example:**
+`!mv pref delete_original 0`
+
+""",
 }
 prefs = {}
 with sqlite3.connect(DB_PATH) as connection:
@@ -230,8 +239,6 @@ async def on_message(msg_in):
 
     # !mv [msgID] [optional multi-move] [#channel] [optional message]
     else:
-        channel_param = 1 if is_reply else 2
-        extra_param = channel_param + 1
 
         try:
             moved_msg = await txt_channel.fetch_message(msg_in.reference.message_id if is_reply else params[1])
@@ -287,11 +294,6 @@ async def on_message(msg_in):
             await txt_channel.send("An invalid channel or thread was provided.")
             return
 
-        strip_ping = get_pref(guild_id, "strip_ping")
-        if strip_ping == "1" and '@' in moved_msg.content:
-            moved_msg.content = moved_msg.content.replace('@','@\u200b')
-            print('everyone striped from msg_in')
-
         wb = None
         wbhks = await msg_in.guild.webhooks()
         for wbhk in wbhks:
@@ -311,7 +313,12 @@ async def on_message(msg_in):
         author_map = {}
         strip_ping = get_pref(guild_id, "strip_ping")
         for msg in before_messages + [moved_msg] + after_messages:
-            msg_content = msg.content.replace('@', '@\u200b') if strip_ping == "1" and '@' in msg.content else msg.content
+            if strip_ping == "0":
+                msg_content = msg.content
+            elif strip_ping == "1":
+                msg_content = msg.content.replace('@', '@\u200b')
+            elif strip_ping == "2":
+                msg_content = discord.utils.escape_mentions(msg.content)
             files = []
             for file in msg.attachments:
                 f = io.BytesIO()
@@ -363,8 +370,10 @@ async def on_message(msg_in):
                     await send_obj.send(embed=e)
                 else:
                     await send_obj.send(description)
-        for msg in before_messages + [moved_msg, msg_in] + after_messages:
-            await msg.delete()
+        delete_original = get_pref(guild_id, "delete_original")
+        if delete_original == "1":
+            for msg in before_messages + [moved_msg, msg_in] + after_messages:
+                await msg.delete()
 
 #end
 client.run(TOKEN)
