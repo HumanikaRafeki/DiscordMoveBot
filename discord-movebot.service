@@ -1,0 +1,18 @@
+# MoveBot Discord Python application
+# https://gitlab.com/sean.ms/movebot
+
+[Unit]
+Description=Discord MoveBot
+
+[Service]
+ExecStartPre=/usr/bin/pip3 install -U --target /home/movebot -r /home/movebot/movebot/requirements.txt
+ExecStart=/usr/bin/python3 /home/movebot/movebot/move_bot.py
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+Type=notify
+
+# Recommended - run the process as a specified user for security reasons
+User=movebot
+
+[Install]
+WantedBy=default.target
