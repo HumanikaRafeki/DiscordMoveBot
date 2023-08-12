@@ -1,16 +1,28 @@
+#!/usr/bin/python3
+########################################
+#
+# This is the master file for @MoveBot 1.5#4299 (896420954396307546)
+# Use any modifications at your own risk!
+# Self-hosted implementations are not supported!
+# Create by @Nexas#6792 (221132862567612417)
+# Database functions added by @Sojhiro#2008 (206797306173849600)
+# More functionality and hosting provided by @SadPuppies | beta<at>timpi.io#7339 (948208421054865410)
+#
+########################################
+
 from concurrent.futures import thread
 import os
 import io
 import json
 import discord
 import requests
-import sqlite3
+import asqlite # using asqlite now since it is asynchronous
+import asyncio # needed for sleep functions
 from contextlib import closing
 from discord import Thread
-from discord.http import Route
-from discord.webhook import Webhook
-from dotenv import load_dotenv
-import logging
+from discord.ext import commands # this upgrades from `client` to `bot` (per Rapptz's recommendation)
+from dotenv import load_dotenv # this keeps the api_token secret, and also allows for user configs
+import logging # pipe all of the output to a log file to make reading through it easier
 
 load_dotenv()
 
@@ -22,7 +34,6 @@ handler = logging.FileHandler(filename=LOG_PATH, encoding='UTF-8', mode='w')
 handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
 logger.addHandler(handler)
 
-load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 STATS_TOKEN = os.getenv('STATS_TOKEN')
 STATS_ID = os.getenv('MOVEBOT_STATS_ID')
@@ -30,12 +41,15 @@ LISTEN_TO = os.getenv('LISTEN_TO')
 ADMIN_ID = os.getenv('ADMIN_UID')
 BOT_ID = os.getenv('MOVEBOT_ID')
 DB_PATH = os.getenv('DB_PATH')
+DELETE_ORIGINAL = os.getenv('DELETE_ORIGINAL')
+MAX_MESSAGES = os.getenv('MAX_MESSAGES')
 
 available_prefs = {
     "notify_dm": "0",
     "embed_message": "0",
     "move_message": "MESSAGE_USER, your message has been moved to DESTINATION_CHANNEL by MOVER_USER",
-    "strip_ping": "0"
+    "strip_ping": "0",
+    "delete_original": "1" # allows to original message to be preserved @SadPuppies 5/31/23
 }
 pref_help = {
     "notify_dm": """
@@ -49,6 +63,7 @@ pref_help = {
 `!mv pref notify_dm 1`
     """,
     "embed_message": """
+
 **name:** `embed_message`
 **value:**
  `0`  Does not embed move message
@@ -58,13 +73,15 @@ pref_help = {
 `!mv pref embed_message 1`
     """,
     "move_message": """
+
 **name:** `move_message`
 **value:** main message sent to the user.
 **variables:** `MESSAGE_USER`, `DESTINATION_CHANNEL`, `MOVER_USER`
 
 **example:**
-`!mv pref send_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`
+`!mv pref send_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`""",
 
+    "strip_ping": """
 **name:** `strip_ping`
 **value:**
 `0` Do not strip pings
@@ -73,28 +90,93 @@ pref_help = {
 **example:**
 `!mv pref strip_ping 1`
     """,
+    #`delete_original` added to allow users to merely copy @SadPuppies 4/9/23
+    "delete_original": """
+**name:** `delete_original`
+**value:**
+`0` Do not delete the original (basically turns the bot into CopyBot)
+`1` Deletes the original message (the default functionality)
+
+**example:**
+`!mv pref delete_original 0`
+    """
 }
 prefs = {}
-with sqlite3.connect(DB_PATH) as connection:
-    connection.row_factory = sqlite3.Row
-    with closing(connection.cursor()) as cursor:
-        cursor.execute(
-            """CREATE TABLE IF NOT EXISTS prefs (
-            key INTEGER PRIMARY KEY,
-            guild_id INTEGER,
-            pref TEXT,
-            value TEXT)"""
-        )
-        cursor.execute(f"SELECT * FROM prefs")
-        rows = cursor.fetchall()
-        for row in rows:
-            g_id = int(row["guild_id"])
-            if g_id not in prefs:
-                prefs[g_id] = {}
-            prefs[g_id][str(row["pref"])] = str(row["value"])
+#upgrading to `asqlite` <https://github.com/Rapptz/asqlite> because it has `async`/`await` functionality. This will alleviate concurrency errors @SadPuppies 4/9/23
+async def db_init():
+    async with asqlite.connect(DB_PATH) as connection:
+        #connection.row_factory = sqlite3.Row
+        async with connection.cursor() as cursor:
+            await cursor.execute( #added all onto same row, this prevents duplicate g_id / pref_name entries. ALso removed `key` column, it is redundant (all guild IDs are unique)
+                """CREATE TABLE IF NOT EXISTS prefs (
+                guild_id INTEGER PRIMARY KEY,
+                notify_dm TEXT,
+                embed_message TEXT,
+                move_message TEXT,
+                strip_ping TEXT,
+                delete_original TEXT)"""
+            ) #All guild preferences go on one line now. This will eliminate all duplicate entries @SadPuppies 4/9/23
+            #setting some of these values to `INT` type will be tedious at best becuase `move_message` will have to be `TEXT` and specifying different types within a single `update pref` f
+unction (see below) is beyong this author's expertise @SadPuppies 4/9/23
+            await cursor.execute("SELECT * FROM prefs")
+            rows = await cursor.fetchall()
+            for row in rows:
+                g_id = int(row["guild_id"])
+                if g_id not in prefs:
+                    prefs[g_id] = {}
+                prefs[g_id]["notify_dm"] = [str(row["notify_dm"])]
+                prefs[g_id]["embed_message"] = [str(row["embed_message"])]
+                prefs[g_id]["move_message"] = [str(row["move_message"])]
+                prefs[g_id]["strip_ping"] = [str(row["strip_ping"])]
+                prefs[g_id]["delete_original"] = [str(row["delete_original"])]
+        await cursor.close()
+        await connection.commit()
 
-def get_pref(guild_id, pref):
+asyncio.run(db_init())
+
+async def get_pref(guild_id, pref):
     return prefs[guild_id][pref] if guild_id in prefs and pref in prefs[guild_id] else available_prefs[pref]
+
+async def update_pref(guild_id, pref, value): #This needs to be it's own function so that it can be `async`
+    if guild_id not in prefs:
+        prefs[guild_id] = {"notify_dm": 0, "embed_message": 0, "move_message": "", "strip_ping": 0, "delete_original": 1}
+        prefs[guild_id][pref] = value
+        async with asqlite.connect(DB_PATH) as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute(f"INSERT OR IGNORE INTO prefs VALUES (?, ?, ?, ?, ?, ?)", (int(guild_id),prefs[guild_id]["notify_dm"], prefs[guild_id]["embed_message"], prefs[guild_id
+]["move_message"], prefs[guild_id]["strip_ping"], prefs[guild_id]["delete_original"]))
+                await cursor.close()
+                await connection.commit()
+    else:
+        async with asqlite.connect(DB_PATH) as connection:
+            async with connection.cursor() as cursor:
+                sql = f"UPDATE prefs SET {pref} = {value} WHERE guild_id = {int(guild_id)}"
+                await cursor.execute(sql)
+                await cursor.close()
+                await connection.commit()
+
+async def update_move_msg_pref(guild_id, moved_message):
+    mm = ""
+    for word in moved_message:
+        mm += word
+    prefs[guild_id]["move_message"] = mm
+    if guild_id not in prefs:
+        prefs[guild_id] = []
+        prefs[guild_id][pref] = value
+        async with asqlite.connect(DB_PATH) as connection:
+            async with connection.cursor() as cursor:
+                sql = f"UPDATE prefs SET move_message = {mm} where guild_id = {int(guild_id)}"
+                await cursor.execute(sql)
+                await cursor.close()
+                await connection.commit()
+
+async def reset_prefs(guild_id):
+    async with asqlite.connect(DB_PATH) as connection:
+        async with connection.cursor() as cursor:
+            sql = f"DELETE FROM prefs WHERE guild_id = {int(guild_id)}"
+            await cursor.execute(sql)
+            await cursor.close()
+            await connection.commit()
 
 pref_help_description = """
 **Preferences**
@@ -107,17 +189,15 @@ for k, v in pref_help.items():
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
-client = discord.AutoShardedClient(intents=intents)
+bot = commands.AutoShardedBot(command_prefix='!', intents=intents, max_messages=int(MAX_MESSAGES)) #upgrading to `bot` because it has been preferred for several months. Using `AutoShardedB
+ot` because we are in too many guilds for regular `Bot`. I had been using `max_messages` previously, I think it saves small bandwidth for the bot, and also increases speed when a command is issued. 10,000 messages had a negligible impact @SadPuppies 4/9/23
 
-@client.event
+@bot.event
 async def on_connect():
-    print(f'{client.user} has connected to Discord!')
-    await client.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f'for spoilers | {LISTEN_TO} help'))
+    print(f'{bot.user} has connected to Discord!')
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f'for spoilers | {LISTEN_TO} help'))
 
-    global admin
-    admin = await client.fetch_user(int(ADMIN_ID))
-
-@client.event
+@bot.event
 async def on_guild_join(guild):
     url=f'https://discordbotlist.com/api/v1/bots/{STATS_ID}/stats'
     headers = {
@@ -125,14 +205,15 @@ async def on_guild_join(guild):
         "Content-Type": 'application/json'
     }
     payload = json.dumps({
-        "guilds": len(client.guilds)
+        "guilds": len(bot.guilds)
     })
     requests.request("POST", url, headers=headers, data=payload)
 
-    notify_me = f'MoveBot was added to {guild.name} ({guild.member_count} members)! Currently in {len(client.guilds)} servers.'
+    notify_me = f'MoveBot was added to {guild.name} ({guild.member_count} members)! Currently in {len(bot.guilds)} servers.'
     await admin.send(notify_me)
+    print(f"Bot has joined a guild. Now in {len(bot.guilds)} guilds.\n")
 
-@client.event
+@bot.event
 async def on_guild_remove(guild):
     url=f'https://discordbotlist.com/api/v1/bots/{STATS_ID}/stats'
     headers = {
@@ -140,18 +221,20 @@ async def on_guild_remove(guild):
         "Content-Type": 'application/json'
     }
     payload = json.dumps({
-        "guilds": len(client.guilds)
+        "guilds": len(bot.guilds)
     })
     requests.request("POST", url, headers=headers, data=payload)
 
-    notify_me = f'MoveBot was removed from {guild.name} ({guild.member_count} members)! Currently in {len(client.guilds)} servers.'
+    notify_me = f'MoveBot was removed from {guild.name} ({guild.member_count} members)! Currently in {len(bot.guilds)} servers.'
     await admin.send(notify_me)
+    print(f"Bot has left a guild. Now in {len(bot.guilds)} guilds.\n")
 
-@client.event
+@bot.event
 async def on_message(msg_in):
-    if msg_in.author == client.user or msg_in.author.bot \
+    if msg_in.author == bot.user or msg_in.author.bot \
             or not msg_in.content.startswith(LISTEN_TO) \
-            or not msg_in.author.guild_permissions.manage_messages:
+            or not msg_in.author.guild_permissions.manage_messages \
+            or not msg_in.author.id == int(ADMIN_ID):
         return
 
     guild_id = msg_in.guild.id
@@ -192,12 +275,9 @@ async def on_message(msg_in):
 
     # !mv reset
     elif params[1] == "reset":
-        with sqlite3.connect("settings.db") as connection:
-            connection.row_factory = sqlite3.Row
-            with closing(connection.cursor()) as cursor:
-                cursor.execute("DELETE FROM prefs WHERE guild_id = ?", (guild_id,))
         if guild_id in prefs:
             prefs.pop(guild_id)
+        await reset_prefs(int(guild_id))
         await txt_channel.send("All preferences reset to default")
 
     # !mv pref [pref_name] [pref_value]
@@ -210,19 +290,16 @@ async def on_message(msg_in):
             response_msg = f"An invalid preference name was provided.\n{pref_help_description}"
         elif len(params) == 3:
             title = "Current Preference"
-            response_msg = f"`{params[2]}`: `{get_pref(guild_id, params[2])}`"
+            response_msg = f"`{params[2]}`: `{await get_pref(guild_id, params[2])}`"
         elif params[3] == "?":
             response_msg = pref_help[params[2]]
+        elif params[2] == "move_message":
+            title = "Move Message Updated"
+            response_msg = f"**Preference:** `move_message` was updated"
+            await update_move_msg_pref(guild_id, params[2:])
         else:
-            title = "Preference Updated"
-            with sqlite3.connect(DB_PATH) as connection:
-                connection.row_factory = sqlite3.Row
-                with closing(connection.cursor()) as cursor:
-                    cursor.execute("INSERT OR IGNORE INTO prefs(guild_id, pref) VALUES(?, ?)", (guild_id, params[2]))
-                    cursor.execute(f"UPDATE prefs SET value = ? WHERE guild_id = ? AND pref = ?", (params[3], guild_id, params[2]))
-            if guild_id not in prefs:
-                prefs[guild_id] = {}
-            prefs[guild_id][params[2]] = params[3]
+            await update_pref(int(guild_id), params[2], params[3])
+            title = "Preferences Updated"
             response_msg = f"**Preference:** `{params[2]}` Updated to `{params[3]}`"
         e = discord.Embed(title=title)
         e.description = response_msg
@@ -230,8 +307,6 @@ async def on_message(msg_in):
 
     # !mv [msgID] [optional multi-move] [#channel] [optional message]
     else:
-        channel_param = 1 if is_reply else 2
-        extra_param = channel_param + 1
 
         try:
             moved_msg = await txt_channel.fetch_message(msg_in.reference.message_id if is_reply else params[1])
@@ -256,12 +331,11 @@ async def on_message(msg_in):
                     await txt_channel.send('An invalid destination message ID was provided.')
                     return
 
-                limit = 100
+                limit = int(MAX_MESSAGES)
                 while True:
                     found = False
                     test_messages = [m async for m in txt_channel.history(limit=limit, after=moved_msg)]
                     for i, msg in enumerate(test_messages):
-                        print(msg.id)
                         if msg.id == value:
                             after_messages = test_messages[:i+1]
                             found = True
@@ -271,7 +345,7 @@ async def on_message(msg_in):
                             return
                     if found:
                         break
-                    limit += 1000
+                    limit += 100
 
             channel_param += 1
             leftovers = params[channel_param].split(maxsplit=1)
@@ -286,11 +360,6 @@ async def on_message(msg_in):
         except:
             await txt_channel.send("An invalid channel or thread was provided.")
             return
-
-        strip_ping = get_pref(guild_id, "strip_ping")
-        if strip_ping == "1" and '@' in moved_msg.content:
-            moved_msg.content = moved_msg.content.replace('@','@\u200b')
-            print('everyone striped from msg_in')
 
         wb = None
         wbhks = await msg_in.guild.webhooks()
@@ -309,7 +378,7 @@ async def on_message(msg_in):
             reactionss = moved_msg.reactions
 
         author_map = {}
-        strip_ping = get_pref(guild_id, "strip_ping")
+        strip_ping = await get_pref(guild_id, "strip_ping")
         for msg in before_messages + [moved_msg] + after_messages:
             msg_content = msg.content.replace('@', '@\u200b') if strip_ping == "1" and '@' in msg.content else msg.content
             files = []
@@ -335,7 +404,7 @@ async def on_message(msg_in):
             if msg.author.id not in author_map:
                 author_map[msg.author.id] = msg.author
 
-        notify_dm = get_pref(guild_id, "notify_dm")
+        notify_dm = await get_pref(guild_id, "notify_dm")
         authors = [author_map[a] for a in author_map]
         author_ids = [f"<@!{a.id}>" for a in authors]
         send_objs = []
@@ -351,20 +420,31 @@ async def on_message(msg_in):
                     message_users = author_ids[0]
                 else:
                     message_users = f'{", ".join(author_ids[:-1])}{"," if len(author_ids) > 2 else ""} and {author_ids[-1]}'
-                description = get_pref(guild_id, "move_message") \
-                    .replace("MESSAGE_USER", message_users) \
+                description = await get_pref(guild_id, "move_message")
+                description.replace("MESSAGE_USER", message_users) \
                     .replace("DESTINATION_CHANNEL", dest_channel) \
                     .replace("MOVER_USER", f"<@!{msg_in.author.id}>")
                 description = f'{description}{extra_message}'
-                embed = get_pref(guild_id, "embed_message") == "1"
-                if embed:
+                embed = await get_pref(guild_id, "embed_message")
+                if embed == "1":
                     e = discord.Embed(title="Message Moved")
                     e.description = description
                     await send_obj.send(embed=e)
                 else:
                     await send_obj.send(description)
-        for msg in before_messages + [moved_msg, msg_in] + after_messages:
-            await msg.delete()
+        delete_original = await get_pref(guild_id, "delete_original")
+        if delete_original == "1": #This will now only delete messages if the user wants it deleted @SadPuppies 4/9/23
+            for msg in before_messages + [moved_msg, msg_in] + after_messages:
+                try: #Also lets print exceptions when they arise
+                    await msg.delete()
+                except "Missing Access":
+                    e = discord.Embed(title="Missing Access", description="The bot cannot access that channel. Please check the permissions (just apply **Admin** to the bot or it's role fo
+r EasyMode) or hop into the help server https://discord.gg/msV7r3XPtm for support from the community or devs")
+                    await send_obj.send(embed=e)
+                except "Unknown Message":
+                    e = discord.Embed(title="Unknown Message", description="The bot attempted to delete a message, but could not find it. Did someone already delete it? Was it a part ot a 
+`!mv +/-**x** #\channel` command? Hop into the help server https://discord.gg/msV7r3XPtm for support from the community and devs")
+                    await send_obj.send(embed=e)
 
 #end
-client.run(TOKEN)
+bot.run(TOKEN)
