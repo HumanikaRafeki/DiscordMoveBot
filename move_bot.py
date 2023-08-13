@@ -419,7 +419,7 @@ async def on_message(msg_in):
                 else:
                     message_users = f'{", ".join(author_ids[:-1])}{"," if len(author_ids) > 2 else ""} and {author_ids[-1]}'
                 description = await get_pref(guild_id, "move_message")
-                description.replace("MESSAGE_USER", message_users) \
+                description = description.replace("MESSAGE_USER", message_users) \
                     .replace("DESTINATION_CHANNEL", dest_channel) \
                     .replace("MOVER_USER", f"<@!{msg_in.author.id}>")
                 description = f'{description}{extra_message}'
