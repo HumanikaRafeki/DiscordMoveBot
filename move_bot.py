@@ -116,7 +116,7 @@ async def db_init():
                 strip_ping TEXT,
                 delete_original TEXT)"""
             ) #All guild preferences go on one line now. This will eliminate all duplicate entries @SadPuppies 4/9/23
-            #setting some of these values to `INT` type will be tedious at best becuase `move_message` will have to be `TEXT` and specifying different types within a single `update pref` function (see below) is beyong this author's expertise @SadPuppies 4/9/23
+            #setting some of these values to `INT` type will be tedious at best becuase `move_message` will have to be `TEXT` and specifying different types within a single `update pref` function (see below) is beyond this author's expertise @SadPuppies 4/9/23
             await cursor.execute("SELECT * FROM prefs")
             rows = await cursor.fetchall()
             for row in rows:
@@ -188,11 +188,10 @@ for k, v in pref_help.items():
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
-bot = commands.AutoShardedBot(command_prefix='!', intents=intents, max_messages=int(MAX_MESSAGES)) #upgrading to `bot` because it has been preferred for several months. Using `AutoShardedB
-ot` because we are in too many guilds for regular `Bot`. I had been using `max_messages` previously, I think it saves small bandwidth for the bot, and also increases speed when a command is issued. 10,000 messages had a negligible impact @SadPuppies 4/9/23
+bot = commands.AutoShardedBot(command_prefix='!', intents=intents, max_messages=int(MAX_MESSAGES)) #upgrading to `bot` because it has been preferred for several months. Using `AutoShardedBot` because we are in too many guilds for regular `Bot`. I had been using `max_messages` previously, I think it saves small bandwidth for the bot, and also increases speed when a command is issued. 10,000 messages had a negligible impact @SadPuppies 4/9/23
 
 @bot.event
-async def on_connect():
+async def on_ready():
     print(f'{bot.user} has connected to Discord!')
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=f'for spoilers | {LISTEN_TO} help'))
 
@@ -437,12 +436,10 @@ async def on_message(msg_in):
                 try: #Also lets print exceptions when they arise
                     await msg.delete()
                 except "Missing Access":
-                    e = discord.Embed(title="Missing Access", description="The bot cannot access that channel. Please check the permissions (just apply **Admin** to the bot or it's role fo
-r EasyMode) or hop into the help server https://discord.gg/msV7r3XPtm for support from the community or devs")
+                    e = discord.Embed(title="Missing Access", description="The bot cannot access that channel. Please check the permissions (just apply **Admin** to the bot or it's role for EasyMode) or hop into the help server https://discord.gg/msV7r3XPtm for support from the community or devs")
                     await send_obj.send(embed=e)
                 except "Unknown Message":
-                    e = discord.Embed(title="Unknown Message", description="The bot attempted to delete a message, but could not find it. Did someone already delete it? Was it a part ot a 
-`!mv +/-**x** #\channel` command? Hop into the help server https://discord.gg/msV7r3XPtm for support from the community and devs")
+                    e = discord.Embed(title="Unknown Message", description="The bot attempted to delete a message, but could not find it. Did someone already delete it? Was it a part ot a `!mv +/-**x** #\channel` command? Hop into the help server https://discord.gg/msV7r3XPtm for support from the community and devs")
                     await send_obj.send(embed=e)
 
 #end
