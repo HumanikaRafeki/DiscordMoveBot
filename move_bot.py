@@ -116,8 +116,7 @@ async def db_init():
                 strip_ping TEXT,
                 delete_original TEXT)"""
             ) #All guild preferences go on one line now. This will eliminate all duplicate entries @SadPuppies 4/9/23
-            #setting some of these values to `INT` type will be tedious at best becuase `move_message` will have to be `TEXT` and specifying different types within a single `update pref` f
-unction (see below) is beyong this author's expertise @SadPuppies 4/9/23
+            #setting some of these values to `INT` type will be tedious at best becuase `move_message` will have to be `TEXT` and specifying different types within a single `update pref` function (see below) is beyong this author's expertise @SadPuppies 4/9/23
             await cursor.execute("SELECT * FROM prefs")
             rows = await cursor.fetchall()
             for row in rows:
