@@ -161,7 +161,7 @@ async def update_move_msg_pref(guild_id, moved_message):
         mm += word
     prefs[guild_id]["move_message"] = mm
     if guild_id not in prefs:
-        prefs[guild_id] = []
+        prefs[guild_id] = {}
         prefs[guild_id][pref] = value
         async with asqlite.connect(DB_PATH) as connection:
             async with connection.cursor() as cursor:
