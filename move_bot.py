@@ -471,7 +471,7 @@ async def _move(interaction: discord.Interaction, channel: str, msg_id: str, mul
                     await send_obj.send(description)
                 except:
                     print("Notification failed")
-        delete_original = await get_pref(guild_id, "delete_original")
+        delete_original = await _get_pref(guild_id, "delete_original")
         if delete_original == "1": #This will now only delete messages if the user wants it deleted @SadPuppies 4/9/23
             for msg in itertools.chain(before_messages, [moved_msg], after_messages):
                 try: #Also lets print exceptions when they arise
