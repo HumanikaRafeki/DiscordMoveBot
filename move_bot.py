@@ -143,8 +143,15 @@ async def update_pref(guild_id, pref, value): #This needs to be it's own functio
         prefs[guild_id][pref] = value
         async with asqlite.connect(DB_PATH) as connection:
             async with connection.cursor() as cursor:
-                await cursor.execute(f"INSERT OR IGNORE INTO prefs VALUES (?, ?, ?, ?, ?, ?)", (int(guild_id),prefs[guild_id]["notify_dm"], prefs[guild_id]["embed_message"], prefs[guild_id
-]["move_message"], prefs[guild_id]["strip_ping"], prefs[guild_id]["delete_original"]))
+                await cursor.execute(f"INSERT OR IGNORE INTO prefs VALUES (?, ?, ?, ?, ?, ?)",
+                                        (int(guild_id),
+                                         prefs[guild_id]["notify_dm"],
+                                         prefs[guild_id]["embed_message"],
+                                         prefs[guild_id]["move_message"],
+                                         prefs[guild_id]["strip_ping"],
+                                         prefs[guild_id]["delete_original"]
+                                        )
+                                    )
                 await cursor.close()
                 await connection.commit()
     else:
@@ -167,10 +174,24 @@ async def update_move_msg_pref(guild_id, moved_message):
     mm = ""
     for word in moved_message:
         mm += word
-    prefs[guild_id]["move_message"] = mm
     if guild_id not in prefs:
         prefs[guild_id] = {}
-        prefs[guild_id][pref] = value
+        prefs[guild_id]['move_message'] = mm
+        async with asqlite.connect(DB_PATH) as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute(f"INSERT OR IGNORE INTO prefs VALUES (?, ?, ?, ?, ?, ?)",
+                                        (int(guild_id),
+                                         prefs[guild_id]["notify_dm"],
+                                         prefs[guild_id]["embed_message"],
+                                         prefs[guild_id]["move_message"],
+                                         prefs[guild_id]["strip_ping"],
+                                         prefs[guild_id]["delete_original"]
+                                        )
+                                    )
+                await cursor.close()
+                await connection.commit()
+    else:
+        prefs[guild_id]['move_message'] = mm
         async with asqlite.connect(DB_PATH) as connection:
             async with connection.cursor() as cursor:
                 sql = f"UPDATE prefs SET move_message = {mm} where guild_id = {int(guild_id)}"
