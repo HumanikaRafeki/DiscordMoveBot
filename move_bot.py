@@ -155,6 +155,14 @@ async def update_pref(guild_id, pref, value): #This needs to be it's own functio
                 await cursor.close()
                 await connection.commit()
 
+async def reset_prefs(guild_id):
+    async with asqlite.connect(DB_PATH) as connection:
+        async with connection.cursor() as cursor:
+            sql = f"DELETE FROM prefs WHERE guild_id = {int(guild_id)}"
+            await cursor.execute(sql)
+            await cursor.close()
+            await connection.commit()
+
 async def update_move_msg_pref(guild_id, moved_message):
     mm = ""
     for word in moved_message:
@@ -539,6 +547,5 @@ class MoveBotModal(discord.ui.Modal, title="More options"):
 @app_commands.checks.has_permissions(manage_messages=True)
 async def move_from_context_menu(interaction: discord.Interaction, message: discord.Message):
     await interaction.response.send_message('Select a destination channel:', view=MovebotView(message.id), ephemeral=True)
-
 
 move_bot.run(TOKEN)
