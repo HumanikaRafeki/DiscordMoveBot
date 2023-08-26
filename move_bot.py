@@ -139,7 +139,7 @@ async def _get_pref(guild_id, pref):
 
 async def update_pref(guild_id, pref, value): #This needs to be it's own function so that it can be `async`
     if guild_id not in prefs:
-        prefs[guild_id] = {"notify_dm": 0, "embed_message": 0, "move_message": "", "strip_ping": 0, "delete_original": 1}
+        prefs[guild_id] = available_prefs 
         prefs[guild_id][pref] = value
         async with asqlite.connect(DB_PATH) as connection:
             async with connection.cursor() as cursor:
@@ -175,7 +175,7 @@ async def update_move_msg_pref(guild_id, moved_message):
     for word in moved_message:
         mm += word
     if guild_id not in prefs:
-        prefs[guild_id] = {}
+        prefs[guild_id] = available_prefs
         prefs[guild_id]['move_message'] = mm
         async with asqlite.connect(DB_PATH) as connection:
             async with connection.cursor() as cursor:
