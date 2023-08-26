@@ -291,7 +291,7 @@ async def reset(interaction: discord.Interaction):
     '''Reset all preferences to default'''
     if interaction.guild_id in prefs:
         prefs.pop(interaction.guild_id)
-    await reset_prefs(int(guild_id))
+    await reset_prefs(int(interaction.guild_id))
     await interaction.response.send_message("All preferences reset to default")
 
 @move_bot.group_pref.command(name='get')
