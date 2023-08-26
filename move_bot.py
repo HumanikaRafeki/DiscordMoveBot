@@ -405,7 +405,7 @@ async def _move(interaction: discord.Interaction, channel: str, msg_id: str, mul
 
     parent_channel = target_channel.parent if isinstance(target_channel, Thread) else target_channel
     if wb is None:
-        wb = await parent_channel.create_webhook(name=f'MoveBot{BOT_ID}', reason='Required webhook for MoveBot to function.')
+        wb = await parent_channel.create_webhook(name=f'MoveBot-{BOT_ID}', reason='Required webhook for MoveBot to function.')
     else:
         if wb.channel != parent_channel:
             await wb.edit(channel=parent_channel)
