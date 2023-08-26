@@ -351,11 +351,12 @@ async def move(interaction: discord.Interaction, channel: str, msg_id: str, mult
     return await _move(interaction=interaction, channel=channel, msg_id=msg_id, multi_move=multi_move, notification_message=notification_message)
 
 async def _move(interaction: discord.Interaction, channel: str, msg_id: str, multi_move: Optional[str], notification_message: Optional[str]):
+    await interaction.response.defer(ephemeral=True)
     # retrieve moved message
     try:
         moved_msg = await interaction.channel.fetch_message(msg_id)
     except:
-        return await interaction.response.send_message('An invalid message ID was provided. You can ignore the message ID by executing the **move** command as a reply to the target message')
+        return await interaction.followup.send('An invalid message ID was provided. You can ignore the message ID by executing the **move** command as a reply to the target message')
 
     before_messages = []
     after_messages = []
@@ -371,7 +372,7 @@ async def _move(interaction: discord.Interaction, channel: str, msg_id: str, mul
             try:
                 await interaction.channel.fetch_message(value)
             except:
-                return await interaction.response.send_message('An invalid destination message ID was provided.')
+                return await interaction.followup.send('An invalid destination message ID was provided.')
 
             limit = int(MAX_MESSAGES)
             found = False
@@ -379,7 +380,7 @@ async def _move(interaction: discord.Interaction, channel: str, msg_id: str, mul
             while not found:
                 test_messages = [m async for m in interaction.channel.history(limit=limit, after=cursor)]
                 if (test_messages[-1].id == interaction.channel.last_message_id) and test_messages[-1].id != value:
-                    return await interaction.response.send_message('Reached the latest message without finding the destination message ID.')
+                    return await interaction.followup.send('Reached the latest message without finding the destination message ID.')
                 for i, msg in enumerate(test_messages):
                     if msg.id == value:
                         after_messages = test_messages[:i+1]
@@ -389,23 +390,22 @@ async def _move(interaction: discord.Interaction, channel: str, msg_id: str, mul
                     after_messages.extend(test_messages)
                     cursor = test_messages[-1]
         else:
-            return await interaction.response.send_message('multi_move must start with `-`, `+`, or `~`')
+            return await interaction.followup.send('multi_move must start with `-`, `+`, or `~`')
 
     try:
         target_channel = interaction.guild.get_channel_or_thread(int(channel.strip('<#').strip('>')))
     except:
-        return await interaction.response.send_message("An invalid channel or thread was provided.")
+        return await interaction.followup.send("An invalid channel or thread was provided.")
 
-    await interaction.response.defer(ephemeral=True)
     wb = None
     wbhks = await interaction.guild.webhooks()
     for wbhk in wbhks:
-        if wbhk.name == 'MoveBot':
+        if wbhk.name == f'MoveBot-{BOT_ID}':
             wb = wbhk
 
     parent_channel = target_channel.parent if isinstance(target_channel, Thread) else target_channel
     if wb is None:
-        wb = await parent_channel.create_webhook(name='MoveBot', reason='Required webhook for MoveBot to function.')
+        wb = await parent_channel.create_webhook(name=f'MoveBot{BOT_ID}', reason='Required webhook for MoveBot to function.')
     else:
         if wb.channel != parent_channel:
             await wb.edit(channel=parent_channel)
@@ -471,7 +471,7 @@ async def _move(interaction: discord.Interaction, channel: str, msg_id: str, mul
                     await send_obj.send(description)
                 except:
                     print("Notification failed")
-        delete_original = await _get_pref(guild_id, "delete_original")
+        delete_original = await _get_pref(interaction.guild_id, "delete_original")
         if delete_original == "1": #This will now only delete messages if the user wants it deleted @SadPuppies 4/9/23
             for msg in itertools.chain(before_messages, [moved_msg], after_messages):
                 try: #Also lets print exceptions when they arise
@@ -482,6 +482,7 @@ async def _move(interaction: discord.Interaction, channel: str, msg_id: str, mul
                 except "Unknown Message":
                     e = discord.Embed(title="Unknown Message", description="The bot attempted to delete a message, but could not find it. Did someone already delete it? Was it a part ot a `/move +/-**x** #\channel` command? Hop into the help server https://discord.gg/msV7r3XPtm for support from the community and devs")
                     await send_obj.send(embed=e)
+    return await interaction.followup.send(content="Move operation completed", ephemeral=True)
 
 
 class MovebotView(discord.ui.View):
