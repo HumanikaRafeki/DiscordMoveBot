@@ -385,6 +385,8 @@ async def on_message(msg_in):
             if guild is None:
                 guild = msg.guild
             msg_content = msg.content.replace('@', '@\u200b') if strip_ping == "1" and '@' in msg.content else msg.content
+            if not msg_content:
+                msg_content = '**Empty message. Probably a pin or other channel action.**'
             files = []
             for file in msg.attachments:
                 f = io.BytesIO()
