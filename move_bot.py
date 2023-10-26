@@ -48,6 +48,7 @@ available_prefs = {
     "notify_dm": "0",
     "embed_message": "0",
     "move_message": "MESSAGE_USER, your message has been moved to DESTINATION_CHANNEL by MOVER_USER",
+    "mod_log_message": "Moved MESSAGE_COUNT messages from SOURCE_CHANNEL to DESTINATION_CHANNEL, ordered by MOVER_USER",
     "strip_ping": "0",
     "delete_original": "1" # allows to original message to be preserved @SadPuppies 5/31/23
 }
@@ -55,9 +56,9 @@ pref_help = {
     "notify_dm": """
 **name:** `notify_dm`
 **value:**
- `0`  Sends move message in channel
- `1`  Sends move message as a DM
- `2`  Don't send any message
+ `0`  Sends move message in channel and #mod-log
+ `1`  Sends move message as a DM and to #mod-log
+ `2`  Sends move message only to #mod-log
 
 **example:**
 `!mv pref notify_dm 1`
@@ -226,7 +227,7 @@ async def on_guild_remove(guild):
     notify_me = f'MoveBot was removed from {guild.name} ({guild.member_count} members)! Currently in {len(bot.guilds)} servers.'
     await admin.send(notify_me)
     print(f"Bot has left a guild. Now in {len(bot.guilds)} guilds.\n")
-
+    
 @bot.event
 async def on_message(msg_in):
     if msg_in.author == bot.user or msg_in.author.bot \
@@ -266,6 +267,7 @@ async def on_message(msg_in):
             `!mv +2 #general This message and the 2 after it belongs in general.`
             `!mv -3 #general This message and the 3 before it belongs in general.`
             `!mv ~964656189155737640 #general This message until 964656189155737640 belongs in general.`
+
             {pref_help_description}
             **Head over to https://discord.gg/t5N754rmC6 for any questions or suggestions!**"
         """
@@ -377,7 +379,11 @@ async def on_message(msg_in):
 
         author_map = {}
         strip_ping = await get_pref(guild_id, "strip_ping")
+        moved = 0
+        guild = None
         for msg in before_messages + [moved_msg] + after_messages:
+            if guild is None:
+                guild = msg.guild
             msg_content = msg.content.replace('@', '@\u200b') if strip_ping == "1" and '@' in msg.content else msg.content
             files = []
             for file in msg.attachments:
@@ -402,17 +408,20 @@ async def on_message(msg_in):
             if msg.author.id not in author_map:
                 author_map[msg.author.id] = msg.author
 
+            moved = moved + 1
+
         notify_dm = await get_pref(guild_id, "notify_dm")
+        notify_dm = int(notify_dm)
         authors = [author_map[a] for a in author_map]
         author_ids = [f"<@!{a.id}>" for a in authors]
         send_objs = []
-        if notify_dm == "1":
+        if notify_dm == 1:
             send_objs = authors
-        elif notify_dm != "2":
+        elif notify_dm != 2:
             send_objs = [txt_channel]
-        if send_objs:
+        if notify_dm != 2:
             for send_obj in send_objs:
-                if notify_dm == "1":
+                if notify_dm == 1:
                     message_users = f"<@!{send_obj.id}>"
                 elif len(author_ids) == 1:
                     message_users = author_ids[0]
@@ -428,19 +437,33 @@ async def on_message(msg_in):
                     e = discord.Embed(title="Message Moved")
                     e.description = description
                     await send_obj.send(embed=e)
-                else:
+                elif description:
                     await send_obj.send(description)
+
+        mod_channel = discord.utils.get(guild.channels, name="mod-log")
+        description = await get_pref(guild_id, "mod_log_message")
+        description = description.replace("MESSAGE_COUNT", str(moved)) \
+                    .replace("SOURCE_CHANNEL", f"<#{txt_channel.id}>") \
+                    .replace("DESTINATION_CHANNEL", dest_channel) \
+                    .replace("MOVER_USER", f"`{msg_in.author.name}`")
+        try:
+            await mod_channel.send(description)
+        except "Missing Access":
+            e = discord.Embed(title="Missing Access", description="The bot cannot access the mod_log channel. Please check the permissions (just apply **Admin** to the bot or it's role for EasyMode)")
+            await txt_channel.send(embed=e)
+            
         delete_original = await get_pref(guild_id, "delete_original")
-        if delete_original == "1": #This will now only delete messages if the user wants it deleted @SadPuppies 4/9/23
+        delete_original = int(delete_original)
+        if delete_original == 1: #This will now only delete messages if the user wants it deleted @SadPuppies 4/9/23
             for msg in before_messages + [moved_msg, msg_in] + after_messages:
                 try: #Also lets print exceptions when they arise
                     await msg.delete()
                 except "Missing Access":
-                    e = discord.Embed(title="Missing Access", description="The bot cannot access that channel. Please check the permissions (just apply **Admin** to the bot or it's role for EasyMode) or hop into the help server https://discord.gg/msV7r3XPtm for support from the community or devs")
-                    await send_obj.send(embed=e)
+                    e = discord.Embed(title="Missing Access", description="The bot cannot access that channel. Please check the permissions (just apply **Admin** to the bot or it's role for EasyMode)")
+                    await txt_channel.send(embed=e)
                 except "Unknown Message":
-                    e = discord.Embed(title="Unknown Message", description="The bot attempted to delete a message, but could not find it. Did someone already delete it? Was it a part ot a `!mv +/-**x** #\channel` command? Hop into the help server https://discord.gg/msV7r3XPtm for support from the community and devs")
-                    await send_obj.send(embed=e)
-
+                    e = discord.Embed(title="Unknown Message", description="The bot attempted to delete a message, but could not find it. Did someone already delete it? Was it a part ot a `!mv +/-**x** #\channel` command?")
+                    await txt_channel.send(embed=e)
+                    
 #end
 bot.run(TOKEN)
