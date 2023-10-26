@@ -443,16 +443,17 @@ async def on_message(msg_in):
                     await send_obj.send(description)
 
         mod_channel = discord.utils.get(guild.channels, name="mod-log")
-        description = await get_pref(guild_id, "mod_log_message")
-        description = description.replace("MESSAGE_COUNT", str(moved)) \
-                    .replace("SOURCE_CHANNEL", f"<#{txt_channel.id}>") \
-                    .replace("DESTINATION_CHANNEL", dest_channel) \
-                    .replace("MOVER_USER", f"`{msg_in.author.name}`")
-        try:
-            await mod_channel.send(description)
-        except "Missing Access":
-            e = discord.Embed(title="Missing Access", description="The bot cannot access the mod_log channel. Please check the permissions (just apply **Admin** to the bot or it's role for EasyMode)")
-            await txt_channel.send(embed=e)
+        if mod_channel:
+            description = await get_pref(guild_id, "mod_log_message")
+            description = description.replace("MESSAGE_COUNT", str(moved)) \
+                                     .replace("SOURCE_CHANNEL", f"<#{txt_channel.id}>") \
+                                     .replace("DESTINATION_CHANNEL", dest_channel) \
+                                     .replace("MOVER_USER", f"`{msg_in.author.name}`")
+            try:
+                await mod_channel.send(description)
+            except "Missing Access":
+                e = discord.Embed(title="Missing Access", description="The bot cannot access the mod_log channel. Please check the permissions (just apply **Admin** to the bot or it's role for EasyMode)")
+                await txt_channel.send(embed=e)
             
         delete_original = await get_pref(guild_id, "delete_original")
         delete_original = int(delete_original)
