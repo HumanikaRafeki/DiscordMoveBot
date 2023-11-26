@@ -135,7 +135,7 @@ async def db_init():
 asyncio.run(db_init())
 
 async def get_pref(guild_id, pref):
-    result = prefs[guild_id][pref][0] if guild_id in prefs and pref in prefs[guild_id] else available_prefs[pref]
+    result = prefs[guild_id][pref] if guild_id in prefs and pref in prefs[guild_id] else available_prefs[pref]
     if type(result) == list or type(result) == tuple:
         return result[0]
     elif result is None:
