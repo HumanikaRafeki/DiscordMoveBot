@@ -135,7 +135,13 @@ async def db_init():
 asyncio.run(db_init())
 
 async def get_pref(guild_id, pref):
-    return prefs[guild_id][pref] if guild_id in prefs and pref in prefs[guild_id] else available_prefs[pref]
+    result = prefs[guild_id][pref][0] if guild_id in prefs and pref in prefs[guild_id] else available_prefs[pref]
+    if type(result) == list or type(result) == tuple:
+        return result[0]
+    elif result is None:
+        return 0
+    else:
+        return result
 
 async def update_pref(guild_id, pref, value): #This needs to be it's own function so that it can be `async`
     if guild_id not in prefs:
@@ -230,14 +236,21 @@ async def on_guild_remove(guild):
     
 @bot.event
 async def on_message(msg_in):
-    if msg_in.author == bot.user or msg_in.author.bot \
-            or not msg_in.content.startswith(LISTEN_TO) \
-            or not msg_in.author.guild_permissions.manage_messages \
-            or not msg_in.author.id == int(ADMIN_ID):
+    if not msg_in.content.startswith(LISTEN_TO):
+        return
+
+    txt_channel = msg_in.channel
+    mod_channel = discord.utils.get(msg_in.guild.channels, name="mod-log")
+    if msg_in.author == bot.user or msg_in.author.bot:
+        send_channel = mod_channel if mod_channel else txt_channel
+        await send_channel.send(f"Ignoring command from <@!{msg_in.author.id}> because they're a bot.")
+        return
+    if not txt_channel.permissions_for(msg_in.author).manage_messages:
+        send_channel = mod_channel if mod_channel else txt_channel
+        await send_channel.send(f"Ignoring command from user <@!{msg_in.author.id}> because they don't have manage_messages permissions on origin channel <#{txt_channel.id}>.")
         return
 
     guild_id = msg_in.guild.id
-    txt_channel = msg_in.channel
     is_reply = msg_in.reference is not None
     params = msg_in.content.split(maxsplit=2 if is_reply else 3)
 
@@ -285,6 +298,10 @@ async def on_message(msg_in):
         title = "Preference Help"
         if len(params) == 2 or params[2] == "?":
             response_msg = pref_help_description
+        elif not msg_in.author.guild_permissions.administrator:
+            send_channel = mod_channel if mod_channel else txt_channel
+            await send_channel.send(f"Refusing request from <@!{msg_in.author.id}> to change preferences because they're not an administrator.")
+            return
         elif len(params) > 2 and params[2] not in available_prefs:
             title = "Invalid Preference"
             response_msg = f"An invalid preference name was provided.\n{pref_help_description}"
@@ -361,6 +378,11 @@ async def on_message(msg_in):
             await txt_channel.send("An invalid channel or thread was provided.")
             return
 
+        if not target_channel.permissions_for(msg_in.author).manage_messages:
+            send_channel = mod_channel if mod_channel else txt_channel
+            await send_channel.send(f"Ignoring command from user <@!{msg_in.author.id}> because they don't have manage_messages permissions on destination channel <#{target_channel.id}>.")
+            return
+        
         wb = None
         wbhks = await msg_in.guild.webhooks()
         for wbhk in wbhks:
@@ -442,7 +464,8 @@ async def on_message(msg_in):
                 elif description:
                     await send_obj.send(description)
 
-        mod_channel = discord.utils.get(guild.channels, name="mod-log")
+        if not mod_channel:
+            mod_channel = discord.utils.get(msg_in.guild.channels, name="mod-log")
         if mod_channel:
             description = await get_pref(guild_id, "mod_log_message")
             description = description.replace("MESSAGE_COUNT", str(moved)) \
