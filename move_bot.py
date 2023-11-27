@@ -34,15 +34,18 @@ handler = logging.FileHandler(filename=LOG_PATH, encoding='UTF-8', mode='w')
 handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
 logger.addHandler(handler)
 
+MAX_DELETE = 5 # How many messages to delete at a time in bulk deletion
 TOKEN = os.getenv('DISCORD_TOKEN')
-STATS_TOKEN = os.getenv('STATS_TOKEN')
-STATS_ID = os.getenv('MOVEBOT_STATS_ID')
+STATS_TOKEN = os.getenv('STATS_TOKEN', '')
+STATS_ID = os.getenv('MOVEBOT_STATS_ID', 0)
 LISTEN_TO = os.getenv('LISTEN_TO')
 ADMIN_ID = os.getenv('ADMIN_UID')
 BOT_ID = os.getenv('MOVEBOT_ID')
 DB_PATH = os.getenv('DB_PATH')
-DELETE_ORIGINAL = os.getenv('DELETE_ORIGINAL')
 MAX_MESSAGES = os.getenv('MAX_MESSAGES')
+
+if LISTEN_TO.rstrip() == LISTEN_TO:
+    LISTEN_TO += " "
 
 available_prefs = {
     "notify_dm": "0",
@@ -184,6 +187,19 @@ async def reset_prefs(guild_id):
             await cursor.close()
             await connection.commit()
 
+async def send_error(send_obj, exception, title, details):
+    e = discord.Embed(title = title, description = details)
+    if not exception is None:
+        e.description += "\n" + "Discord error message: " + str(exception)
+    await send_obj.send(embed=e)
+
+async def send_mod_log(send_obj, message):
+    try:
+        await send_obj.send(message)
+    except Exception as exc:
+        await send_error(send_obj, exc, "Moderation log inaccessible",
+                   "Unable to log a moderation action.")
+
 pref_help_description = """
 **Preferences**
 You can set bot preferences like so:
@@ -196,6 +212,7 @@ intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 bot = commands.AutoShardedBot(command_prefix='!', intents=intents, max_messages=int(MAX_MESSAGES)) #upgrading to `bot` because it has been preferred for several months. Using `AutoShardedBot` because we are in too many guilds for regular `Bot`. I had been using `max_messages` previously, I think it saves small bandwidth for the bot, and also increases speed when a command is issued. 10,000 messages had a negligible impact @SadPuppies 4/9/23
+admin = bot.get_user(ADMIN_ID)
 
 @bot.event
 async def on_ready():
@@ -204,36 +221,39 @@ async def on_ready():
 
 @bot.event
 async def on_guild_join(guild):
-    url=f'https://discordbotlist.com/api/v1/bots/{STATS_ID}/stats'
-    headers = {
-        "Authorization": STATS_TOKEN,
-        "Content-Type": 'application/json'
-    }
-    payload = json.dumps({
-        "guilds": len(bot.guilds)
-    })
-    requests.request("POST", url, headers=headers, data=payload)
-
-    notify_me = f'MoveBot was added to {guild.name} ({guild.member_count} members)! Currently in {len(bot.guilds)} servers.'
-    await admin.send(notify_me)
-    print(f"Bot has joined a guild. Now in {len(bot.guilds)} guilds.\n")
+    if STATS_ID and STATS_TOKEN:
+        url=f'https://discordbotlist.com/api/v1/bots/{STATS_ID}/stats'
+        headers = {
+            "Authorization": STATS_TOKEN,
+            "Content-Type": 'application/json'
+        }
+        payload = json.dumps({
+            "guilds": len(bot.guilds)
+        })
+        requests.request("POST", url, headers=headers, data=payload)
+    if admin:
+        notify_me = f'MoveBot was added to {guild.name} ({guild.member_count} members)! Currently in {len(bot.guilds)} servers.'
+        await admin.send(notify_me)
+        print(f"Bot has joined a guild. Now in {len(bot.guilds)} guilds.\n")
 
 @bot.event
 async def on_guild_remove(guild):
-    url=f'https://discordbotlist.com/api/v1/bots/{STATS_ID}/stats'
-    headers = {
-        "Authorization": STATS_TOKEN,
-        "Content-Type": 'application/json'
-    }
-    payload = json.dumps({
-        "guilds": len(bot.guilds)
-    })
-    requests.request("POST", url, headers=headers, data=payload)
+    if STATS_ID and STATS_TOKEN:
+        url=f'https://discordbotlist.com/api/v1/bots/{STATS_ID}/stats'
+        headers = {
+            "Authorization": STATS_TOKEN,
+            "Content-Type": 'application/json'
+        }
+        payload = json.dumps({
+            "guilds": len(bot.guilds)
+        })
+        requests.request("POST", url, headers=headers, data=payload)
 
-    notify_me = f'MoveBot was removed from {guild.name} ({guild.member_count} members)! Currently in {len(bot.guilds)} servers.'
-    await admin.send(notify_me)
-    print(f"Bot has left a guild. Now in {len(bot.guilds)} guilds.\n")
-    
+    if admin:
+        notify_me = f'MoveBot was removed from {guild.name} ({guild.member_count} members)! Currently in {len(bot.guilds)} servers.'
+        await admin.send(notify_me)
+        print(f"Bot has left a guild. Now in {len(bot.guilds)} guilds.\n")
+
 @bot.event
 async def on_message(msg_in):
     if not msg_in.content.startswith(LISTEN_TO):
@@ -284,11 +304,17 @@ async def on_message(msg_in):
             {pref_help_description}
             **Head over to https://discord.gg/t5N754rmC6 for any questions or suggestions!**"
         """
-        await msg_in.author.send(embed=e)
+        async with msg_in.author.typing():
+            await msg_in.author.send(embed=e)
+        return
 
     elif params[1] == "ping":
-        bpm = int(round(60.0 / max(1e-9, bot.latency)))
-        await txt_channel.send(f"Pong.\nHeartbeat: {bpm} BPM.")
+        latency = bot.latency
+        bpm = int(round(60.0 / max(1e-9, latency)))
+        ms = latency*1000.0
+        e = discord.Embed(title="Pong", description=f"Heartbeat: {bpm} BPM ({ms:.1f}ms).")
+        await txt_channel.send(embed=e)
+        return
 
     # !mv reset
     elif params[1] == "reset":
@@ -300,6 +326,7 @@ async def on_message(msg_in):
             prefs.pop(guild_id)
         await reset_prefs(int(guild_id))
         await txt_channel.send("All preferences reset to default")
+        return
 
     # !mv pref [pref_name] [pref_value]
     elif params[1] == "pref":
@@ -329,14 +356,16 @@ async def on_message(msg_in):
         e = discord.Embed(title=title)
         e.description = response_msg
         await txt_channel.send(embed=e)
+        return
 
     # !mv [msgID] [optional multi-move] [#channel] [optional message]
-    else:
+    async with txt_channel.typing():
 
         try:
             moved_msg = await txt_channel.fetch_message(msg_in.reference.message_id if is_reply else params[1])
-        except:
-            await txt_channel.send('An invalid message ID was provided. You can ignore the message ID by executing the **move** command as a reply to the target message')
+        except Exception as exc:
+            await send_error(send_obj, exc, "Cannot find message",
+                              "You can ignore the message ID by executing the **move** command as a reply to the target message.")
             return
 
         channel_param = 1 if is_reply else 2
@@ -352,8 +381,9 @@ async def on_message(msg_in):
             else:
                 try:
                     await txt_channel.fetch_message(value)
-                except:
-                    await txt_channel.send('An invalid destination message ID was provided.')
+                except Exception as exc:
+                    await send_error(txt_channel, exc, "Cannot find message",
+                                     'An invalid destination message ID was provided.')
                     return
 
                 limit = int(MAX_MESSAGES)
@@ -366,7 +396,8 @@ async def on_message(msg_in):
                             found = True
                             break
                         elif msg.id == txt_channel.last_message.id:
-                            await txt_channel.send('Reached the latest message without finding the destination message ID.')
+                            await send_error(txt_channel, None, "Cannot find message",
+                                             'Reached the latest message without finding the destination message ID.')
                             return
                     if found:
                         break
@@ -382,13 +413,13 @@ async def on_message(msg_in):
 
         try:
             target_channel = msg_in.guild.get_channel_or_thread(int(dest_channel.strip('<#').strip('>')))
-        except:
-            await txt_channel.send("An invalid channel or thread was provided.")
+        except Exception as exc:
+            await send_error(txt_channel, exc, "Cannot find channel.", "An invalid channel or thread was provided.")
             return
 
         if not target_channel.permissions_for(msg_in.author).manage_messages:
             send_channel = mod_channel if mod_channel else txt_channel
-            await send_channel.send(f"Ignoring command from user <@!{msg_in.author.id}> because they don't have manage_messages permissions on destination channel <#{target_channel.id}>.")
+            await send_mod_log(send_channel, f"Ignoring command from user <@!{msg_in.author.id}> because they don't have manage_messages permissions on destination channel <#{target_channel.id}>.")
             return
         
         wb = None
@@ -480,24 +511,66 @@ async def on_message(msg_in):
                                      .replace("SOURCE_CHANNEL", f"<#{txt_channel.id}>") \
                                      .replace("DESTINATION_CHANNEL", dest_channel) \
                                      .replace("MOVER_USER", f"`{msg_in.author.name}`")
-            try:
-                await mod_channel.send(description)
-            except "Missing Access":
-                e = discord.Embed(title="Missing Access", description="The bot cannot access the mod_log channel. Please check the permissions (just apply **Admin** to the bot or it's role for EasyMode)")
-                await txt_channel.send(embed=e)
+            await send_mod_log(mod_channel, description)
             
         delete_original = await get_pref(guild_id, "delete_original")
         delete_original = int(delete_original)
         if delete_original == 1: #This will now only delete messages if the user wants it deleted @SadPuppies 4/9/23
+
+            # Split messages into blocks of MAX_DELETE or less:
+            delete_me = [ [] ]
             for msg in before_messages + [moved_msg, msg_in] + after_messages:
-                try: #Also lets print exceptions when they arise
-                    await msg.delete()
-                except "Missing Access":
-                    e = discord.Embed(title="Missing Access", description="The bot cannot access that channel. Please check the permissions (just apply **Admin** to the bot or it's role for EasyMode)")
-                    await txt_channel.send(embed=e)
-                except "Unknown Message":
-                    e = discord.Embed(title="Unknown Message", description="The bot attempted to delete a message, but could not find it. Did someone already delete it? Was it a part ot a `!mv +/-**x** #\channel` command?")
-                    await txt_channel.send(embed=e)
+                if len(delete_me[-1]) > MAX_DELETE:
+                    delete_me.append([])
+                delete_me[-1].append(msg)
+
+            # Only warn about failed deletions once:
+            sent_delete_failed = False
+
+            # Loop over all blocks of messages to delete:
+            for delete_list in delete_me:
+                try:
+                    if not delete_list:
+                        next
+                    # Try deleting messages in bulk if we have more than one:
+                    try:
+                        if len(delete_list) > 1:
+                            logger.info("bulk deletion")
+                            await txt_channel.delete_messages(delete_list)
+                            logger.info("next block")
+                            continue
+                    except (discord.NotFound, commands.errors.MessageNotFound) as exc:
+                        # Fall back to deleting one-by-one for this batch if bulk deletion fails.
+                        logger.info("unknown message in bulk delete")
+                        await send_error(txt_channel, None, "Unknown Message", "The bot attempted to delete a message, "
+                                          + "but could not find it. Did someone already delete it? "
+                                          + "Was it a part of a `!mv +/-**x** #\channel` command? "
+                                          + "Falling back to deleting messages one-by-one.")
+                        sent_delete_failed = True
+                    except DiscordException as exc:
+                        logger.info("discord exception in bulk deletion")
+                        await send_error(txt_channel, exc, "Bulk Deletion Failed",
+                                         f"Could not delete a list of {len(delete_list)} messages in one operation. "
+                                         "Will fall back to deleting one at a time. This could take a while.")
+                    logger.info("falling back to individual deletion")
+
+                    # Either bulk deletion failed or we have only one message.
+                    for msg in delete_list:
+                        try:
+                            await msg.delete()
+                        except (discord.NotFound, commands.errors.MessageNotFound) as exc:
+                            logger.info("unknown message in individual deletion")
+                            if not sent_delete_failed:
+                                await send_error(txt_channel, None, "Unknown Message",
+                                                 "The bot attempted to delete a message, "
+                                                 + "but could not find it. Did someone already delete it? "
+                                                 + "Was it a part of a `!mv +/-**x** #\channel` command?")
+                                sent_delete_failed = True
+                except Exception as exc:
+                    await send_error(txt_channel, exc, "Message deletion failed.",
+                                     "Some messages may not have been deleted. "
+                                     + "Please check the permissions (just apply **Admin** to the bot or its role for EasyMode)")
+                    raise
                     
 #end
 bot.run(TOKEN)
