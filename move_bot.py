@@ -286,8 +286,15 @@ async def on_message(msg_in):
         """
         await msg_in.author.send(embed=e)
 
+    elif params[1] == "ping":
+        await txt_channel.send("Pong.")
+
     # !mv reset
     elif params[1] == "reset":
+        if not msg_in.author.guild_permissions.administrator:
+            send_channel = mod_channel if mod_channel else txt_channel
+            await send_channel.send(f"Refusing request from <@!{msg_in.author.id}> to reset preferences because they're not an administrator.")
+            return
         if guild_id in prefs:
             prefs.pop(guild_id)
         await reset_prefs(int(guild_id))
