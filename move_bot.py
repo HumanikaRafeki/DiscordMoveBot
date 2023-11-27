@@ -47,8 +47,8 @@ MAX_MESSAGES = os.getenv('MAX_MESSAGES')
 available_prefs = {
     "notify_dm": "0",
     "embed_message": "0",
-    "move_message": "MESSAGE_USER, your message has been moved to DESTINATION_CHANNEL by MOVER_USER",
-    "mod_log_message": "Moved MESSAGE_COUNT messages from SOURCE_CHANNEL to DESTINATION_CHANNEL, ordered by MOVER_USER",
+    "move_message": "MESSAGE_USER, your message has been moved to DESTINATION_CHANNEL by MOVER_USER.",
+    "mod_log_message": "Moved MESSAGE_COUNT messages from SOURCE_CHANNEL to DESTINATION_CHANNEL, ordered by MOVER_USER.",
     "strip_ping": "0",
     "delete_original": "1" # allows to original message to be preserved @SadPuppies 5/31/23
 }
@@ -287,7 +287,8 @@ async def on_message(msg_in):
         await msg_in.author.send(embed=e)
 
     elif params[1] == "ping":
-        await txt_channel.send("Pong.")
+        bpm = int(round(60.0 / max(1e-9, bot.latency)))
+        await txt_channel.send(f"Pong.\nHeartbeat: {bpm} BPM.")
 
     # !mv reset
     elif params[1] == "reset":
