@@ -1,12 +1,11 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 ########################################
 #
-# This is the master file for @MoveBot 1.5#4299 (896420954396307546)
-# Use any modifications at your own risk!
-# Self-hosted implementations are not supported!
+# MoveBot modified for Swizzle6
 # Create by @Nexas#6792 (221132862567612417)
 # Database functions added by @Sojhiro#2008 (206797306173849600)
 # More functionality and hosting provided by @SadPuppies | beta<at>timpi.io#7339 (948208421054865410)
+# Bug fixes and more functionality from @UnorderedSigh (1037106141668331532)
 #
 ########################################
 
@@ -43,6 +42,7 @@ ADMIN_ID = os.getenv('ADMIN_UID')
 BOT_ID = os.getenv('MOVEBOT_ID')
 DB_PATH = os.getenv('DB_PATH')
 MAX_MESSAGES = os.getenv('MAX_MESSAGES')
+DEBUG_MODE = os.getenv('DEBUG_MODE', '')
 
 if LISTEN_TO.rstrip() == LISTEN_TO:
     LISTEN_TO += " "
@@ -50,8 +50,7 @@ if LISTEN_TO.rstrip() == LISTEN_TO:
 available_prefs = {
     "notify_dm": "0",
     "embed_message": "0",
-    "move_message": "MESSAGE_USER, your message has been moved to DESTINATION_CHANNEL by MOVER_USER.",
-    "mod_log_message": "Moved MESSAGE_COUNT messages from SOURCE_CHANNEL to DESTINATION_CHANNEL, ordered by MOVER_USER.",
+    "move_message": "MESSAGE_USER, your message has been LC_OPERATION to DESTINATION_CHANNEL by MOVER_USER.",
     "strip_ping": "0",
     "delete_original": "1" # allows to original message to be preserved @SadPuppies 5/31/23
 }
@@ -137,7 +136,9 @@ async def db_init():
 
 asyncio.run(db_init())
 
-async def get_pref(guild_id, pref):
+async def get_pref(guild_id, pref, override):
+    if pref in override:
+        return override[pref]
     result = prefs[guild_id][pref] if guild_id in prefs and pref in prefs[guild_id] else available_prefs[pref]
     if type(result) == list or type(result) == tuple:
         return result[0]
@@ -189,7 +190,7 @@ async def reset_prefs(guild_id):
 
 async def send_error(send_obj, exception, title, details):
     e = discord.Embed(title = title, description = details)
-    if not exception is None:
+    if DEBUG_MODE and exception:
         e.description += "\n" + "Discord error message: " + str(exception)
     await send_obj.send(embed=e)
 
@@ -199,6 +200,53 @@ async def send_mod_log(send_obj, message):
     except Exception as exc:
         await send_error(send_obj, exc, "Moderation log inaccessible",
                    "Unable to log a moderation action.")
+
+def split_pair(arg):
+    result = arg.split(maxsplit = 1)
+    if not result:
+        return '', ''
+    elif len(result) == 1:
+        return result[0], ''
+    return result
+
+def parse_args(arg, maxsplit):
+    this, rest = split_pair(arg)
+    if not arg:
+        return [''], {}
+    args = [this]
+    opts = set()
+    while rest and len(args)<maxsplit:
+        this, rest = split_pair(rest)
+        
+        if this and this[0] == '/':
+            opts.add(this)
+        else:
+            args.append(this)
+    if len(args)<=maxsplit and rest:
+        args.append(rest)
+    return args, opts
+
+async def make_prefs_from(send_obj, opts):
+    invalid = set()
+    override = dict()
+    for opt in opts:
+        if   opt == '/mention':    override['notify_dm'] = 0
+        elif opt == '/dm':         override['notify_dm'] = 1
+        elif opt == '/silent':     override['notify_dm'] = 2
+        elif opt == '/no-embed':   override['embed_message'] = 0
+        elif opt == '/embed':      override['embed_message'] = 1
+        elif opt == '/no-strip':   override['strip_ping'] = 0
+        elif opt == '/strip':      override['strip_ping'] = 1
+        elif opt == '/keep':       override['delete_original'] = 0
+        elif opt == '/no-delete':  override['delete_original'] = 0
+        elif opt == '/delete':     override['delete_original'] = 1
+        else:
+            invalid.add(opt)
+    if invalid:
+        invalids = ", ".join(sorted(invalid))
+        s = 's' if len(invalid) > 1 else ''
+        await send_error(send_obj, None, "Invalid option", f"Ignoring unrecognized option{s}: {invalids}")
+    return override
 
 pref_help_description = """
 **Preferences**
@@ -272,7 +320,8 @@ async def on_message(msg_in):
 
     guild_id = msg_in.guild.id
     is_reply = msg_in.reference is not None
-    params = msg_in.content.split(maxsplit=2 if is_reply else 3)
+    params, options = parse_args(msg_in.content, 2 if is_reply else 3)
+    override = await make_prefs_from(txt_channel, options)
 
     # !mv help
     if len(params) < 2 or params[1] == 'help':
@@ -342,7 +391,7 @@ async def on_message(msg_in):
             response_msg = f"An invalid preference name was provided.\n{pref_help_description}"
         elif len(params) == 3:
             title = "Current Preference"
-            response_msg = f"`{params[2]}`: `{await get_pref(guild_id, params[2])}`"
+            response_msg = f"`{params[2]}`: `{await get_pref(guild_id, params[2], override)}`"
         elif params[3] == "?":
             response_msg = pref_help[params[2]]
         elif params[2] == "move_message":
@@ -364,9 +413,12 @@ async def on_message(msg_in):
         try:
             moved_msg = await txt_channel.fetch_message(msg_in.reference.message_id if is_reply else params[1])
         except Exception as exc:
-            await send_error(send_obj, exc, "Cannot find message",
+            await send_error(txt_channel, exc, "Cannot find message",
                               "You can ignore the message ID by executing the **move** command as a reply to the target message.")
             return
+
+        delete_original = await get_pref(guild_id, "delete_original", override)
+        delete_original = int(delete_original)
 
         channel_param = 1 if is_reply else 2
         before_messages = []
@@ -439,15 +491,15 @@ async def on_message(msg_in):
             reactionss = moved_msg.reactions
 
         author_map = {}
-        strip_ping = await get_pref(guild_id, "strip_ping")
+        strip_ping = int(await get_pref(guild_id, "strip_ping", override))
         moved = 0
         guild = None
         for msg in before_messages + [moved_msg] + after_messages:
             if guild is None:
                 guild = msg.guild
-            msg_content = msg.content.replace('@', '@\u200b') if strip_ping == "1" and '@' in msg.content else msg.content
+            msg_content = msg.content.replace('@', '@\u200b') if strip_ping == 1 and '@' in msg.content else msg.content
             if not msg_content:
-                msg_content = '**Empty message. Probably a pin or other channel action.**'
+                msg_content = '*(empty message)*'
             files = []
             for file in msg.attachments:
                 f = io.BytesIO()
@@ -473,7 +525,7 @@ async def on_message(msg_in):
 
             moved = moved + 1
 
-        notify_dm = await get_pref(guild_id, "notify_dm")
+        notify_dm = await get_pref(guild_id, "notify_dm", override)
         notify_dm = int(notify_dm)
         authors = [author_map[a] for a in author_map]
         author_ids = [f"<@!{a.id}>" for a in authors]
@@ -490,87 +542,88 @@ async def on_message(msg_in):
                     message_users = author_ids[0]
                 else:
                     message_users = f'{", ".join(author_ids[:-1])}{"," if len(author_ids) > 2 else ""} and {author_ids[-1]}'
-                description = await get_pref(guild_id, "move_message")
+                description = await get_pref(guild_id, "move_message", override)
                 description = description.replace("MESSAGE_USER", message_users) \
                     .replace("DESTINATION_CHANNEL", dest_channel) \
-                    .replace("MOVER_USER", f"<@!{msg_in.author.id}>")
+                    .replace("MOVER_USER", f"<@!{msg_in.author.id}>") \
+                    .replace("LC_OPERATION", 'moved' if delete_original else 'copied') \
+                    .replace("CC_OPERATION", 'Moved' if delete_original else 'Copied')
                 description = f'{description}{extra_message}'
-                embed = await get_pref(guild_id, "embed_message")
-                if embed == "1":
-                    e = discord.Embed(title="Message Moved")
-                    e.description = description
-                    await send_obj.send(embed=e)
-                elif description:
-                    await send_obj.send(description)
+                embed = int(await get_pref(guild_id, "embed_message", override))
+                try:
+                    if embed == 1:
+                        e = discord.Embed(title="Message Moved")
+                        e.description = description
+                        await send_obj.send(embed=e)
+                    elif description:
+                        await send_obj.send(description)
+                except (discord.NotFound, commands.errors.MessageNotFound) as exc:
+                    pass # probably trying to DM a MoveBot-generated message
+            del send_obj, description, message_users
 
         if not mod_channel:
             mod_channel = discord.utils.get(msg_in.guild.channels, name="mod-log")
         if mod_channel:
-            description = await get_pref(guild_id, "mod_log_message")
+            description = "CC_OPERATION MESSAGE_COUNT messages from SOURCE_CHANNEL to DESTINATION_CHANNEL, ordered by MOVER_USER.",
             description = description.replace("MESSAGE_COUNT", str(moved)) \
                                      .replace("SOURCE_CHANNEL", f"<#{txt_channel.id}>") \
                                      .replace("DESTINATION_CHANNEL", dest_channel) \
-                                     .replace("MOVER_USER", f"`{msg_in.author.name}`")
+                                     .replace("MOVER_USER", f"`{msg_in.author.name}`") \
+                                     .replace("LC_OPERATION", 'moved' if delete_original else 'copied') \
+                                     .replace("CC_OPERATION", 'Moved' if delete_original else 'Copied')
             await send_mod_log(mod_channel, description)
-            
-        delete_original = await get_pref(guild_id, "delete_original")
-        delete_original = int(delete_original)
-        if delete_original == 1: #This will now only delete messages if the user wants it deleted @SadPuppies 4/9/23
-
+        
+        if delete_original:
             # Split messages into blocks of MAX_DELETE or less:
             delete_me = [ [] ]
             for msg in before_messages + [moved_msg, msg_in] + after_messages:
                 if len(delete_me[-1]) > MAX_DELETE:
                     delete_me.append([])
                 delete_me[-1].append(msg)
+        else:
+            delete_me = [ [ msg_in ] ]
 
-            # Only warn about failed deletions once:
-            sent_delete_failed = False
+        # Only warn about failed deletions once:
+        sent_delete_failed = False
 
-            # Loop over all blocks of messages to delete:
-            for delete_list in delete_me:
+        # Loop over all blocks of messages to delete:
+        for delete_list in delete_me:
+            try:
+                if not delete_list:
+                    next
+                # Try deleting messages in bulk if we have more than one:
                 try:
-                    if not delete_list:
-                        next
-                    # Try deleting messages in bulk if we have more than one:
-                    try:
-                        if len(delete_list) > 1:
-                            logger.info("bulk deletion")
-                            await txt_channel.delete_messages(delete_list)
-                            logger.info("next block")
-                            continue
-                    except (discord.NotFound, commands.errors.MessageNotFound) as exc:
-                        # Fall back to deleting one-by-one for this batch if bulk deletion fails.
-                        logger.info("unknown message in bulk delete")
-                        await send_error(txt_channel, None, "Unknown Message", "The bot attempted to delete a message, "
-                                          + "but could not find it. Did someone already delete it? "
-                                          + "Was it a part of a `!mv +/-**x** #\channel` command? "
-                                          + "Falling back to deleting messages one-by-one.")
-                        sent_delete_failed = True
-                    except DiscordException as exc:
-                        logger.info("discord exception in bulk deletion")
-                        await send_error(txt_channel, exc, "Bulk Deletion Failed",
-                                         f"Could not delete a list of {len(delete_list)} messages in one operation. "
-                                         "Will fall back to deleting one at a time. This could take a while.")
-                    logger.info("falling back to individual deletion")
+                    if len(delete_list) > 1:
+                        await txt_channel.delete_messages(delete_list)
+                        continue
+                except (discord.NotFound, commands.errors.MessageNotFound) as exc:
+                    # Fall back to deleting one-by-one for this batch if bulk deletion fails.
+                    await send_error(txt_channel, None, "Unknown Message", "The bot attempted to delete a message, "
+                                      + "but could not find it. Did someone already delete it? "
+                                      + "Was it a part of a `!mv +/-**x** #\channel` command? "
+                                      + "Falling back to deleting messages one-by-one.")
+                    sent_delete_failed = True
+                except DiscordException as exc:
+                    await send_error(txt_channel, exc, "Bulk Deletion Failed",
+                                     f"Could not delete a list of {len(delete_list)} messages in one operation. "
+                                     "Will fall back to deleting one at a time. This could take a while.")
 
-                    # Either bulk deletion failed or we have only one message.
-                    for msg in delete_list:
-                        try:
-                            await msg.delete()
-                        except (discord.NotFound, commands.errors.MessageNotFound) as exc:
-                            logger.info("unknown message in individual deletion")
-                            if not sent_delete_failed:
-                                await send_error(txt_channel, None, "Unknown Message",
-                                                 "The bot attempted to delete a message, "
-                                                 + "but could not find it. Did someone already delete it? "
-                                                 + "Was it a part of a `!mv +/-**x** #\channel` command?")
-                                sent_delete_failed = True
-                except Exception as exc:
-                    await send_error(txt_channel, exc, "Message deletion failed.",
-                                     "Some messages may not have been deleted. "
-                                     + "Please check the permissions (just apply **Admin** to the bot or its role for EasyMode)")
-                    raise
-                    
+                # Either bulk deletion failed or we have only one message.
+                for msg in delete_list:
+                    try:
+                        await msg.delete()
+                    except (discord.NotFound, commands.errors.MessageNotFound) as exc:
+                        if not sent_delete_failed:
+                            await send_error(txt_channel, None, "Unknown Message",
+                                             "The bot attempted to delete a message, "
+                                             + "but could not find it. Did someone already delete it? "
+                                             + "Was it a part of a `!mv +/-**x** #\channel` command?")
+                            sent_delete_failed = True
+            except Exception as exc:
+                await send_error(txt_channel, exc, "Message deletion failed.",
+                                 "Some messages may not have been deleted. "
+                                 + "Please check the permissions (just apply **Admin** to the bot or its role for EasyMode)")
+                raise
+                
 #end
 bot.run(TOKEN)
