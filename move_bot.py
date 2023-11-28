@@ -619,7 +619,7 @@ async def on_message(msg_in):
                                       + f"Was it a part of a `{LISTEN_TO}+/-**x** #\channel` command? "
                                       + "Falling back to deleting messages one-by-one.")
                     sent_delete_failed = True
-                except DiscordException as exc:
+                except Exception as exc:
                     await send_error(txt_channel, exc, "Bulk Deletion Failed",
                                      f"Could not delete a list of {len(delete_list)} messages in one operation. "
                                      "Will fall back to deleting one at a time. This could take a while.")
