@@ -33,7 +33,7 @@ handler = logging.FileHandler(filename=LOG_PATH, encoding='UTF-8', mode='w')
 handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
 logger.addHandler(handler)
 
-MAX_DELETE = 5 # How many messages to delete at a time in bulk deletion
+MAX_DELETE = 35 # How many messages to delete at a time in bulk deletion
 TOKEN = os.getenv('DISCORD_TOKEN')
 STATS_TOKEN = os.getenv('STATS_TOKEN', '')
 STATS_ID = os.getenv('MOVEBOT_STATS_ID', 0)
