@@ -580,7 +580,7 @@ async def on_message(msg_in):
         if not mod_channel:
             mod_channel = discord.utils.get(msg_in.guild.channels, name="mod-log")
         if mod_channel:
-            description = "CC_OPERATION MESSAGE_COUNT messages from SOURCE_CHANNEL to DESTINATION_CHANNEL, ordered by MOVER_USER.",
+            description = "CC_OPERATION MESSAGE_COUNT messages from SOURCE_CHANNEL to DESTINATION_CHANNEL, ordered by MOVER_USER."
             description = description.replace("MESSAGE_COUNT", str(moved)) \
                                      .replace("SOURCE_CHANNEL", f"<#{txt_channel.id}>") \
                                      .replace("DESTINATION_CHANNEL", dest_channel) \
