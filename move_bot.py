@@ -55,7 +55,7 @@ available_prefs = {
     "delete_original": "1" # allows to original message to be preserved @SadPuppies 5/31/23
 }
 pref_help = {
-    "notify_dm": """
+    "notify_dm": f"""
 **name:** `notify_dm`
 **value:**
  `0`  Sends move message in channel and #mod-log
@@ -63,7 +63,7 @@ pref_help = {
  `2`  Sends move message only to #mod-log
 
 **example:**
-`!mv pref notify_dm 1`
+`{LISTEN_TO}pref notify_dm 1`
     """,
     "embed_message": """
 
@@ -73,7 +73,7 @@ pref_help = {
  `1`  Embeds move message
 
 **example:**
-`!mv pref embed_message 1`
+`{LISTEN_TO}pref embed_message 1`
     """,
     "move_message": """
 
@@ -82,7 +82,7 @@ pref_help = {
 **variables:** `MESSAGE_USER`, `DESTINATION_CHANNEL`, `MOVER_USER`
 
 **example:**
-`!mv pref send_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`""",
+`{LISTEN_TO}pref send_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`""",
 
     "strip_ping": """
 **name:** `strip_ping`
@@ -91,17 +91,17 @@ pref_help = {
 `1` Strip 'everyone' and 'here' pings
 
 **example:**
-`!mv pref strip_ping 1`
+`{LISTEN_TO}pref strip_ping 1`
     """,
     #`delete_original` added to allow users to merely copy @SadPuppies 4/9/23
-    "delete_original": """
+    "delete_original": f"""
 **name:** `delete_original`
 **value:**
 `0` Do not delete the original (basically turns the bot into CopyBot)
 `1` Deletes the original message (the default functionality)
 
 **example:**
-`!mv pref delete_original 0`
+`{LISTEN_TO}pref delete_original 0`
     """
 }
 prefs = {}
@@ -248,10 +248,10 @@ async def make_prefs_from(send_obj, opts):
         await send_error(send_obj, None, "Invalid option", f"Ignoring unrecognized option{s}: {invalids}")
     return override
 
-pref_help_description = """
+pref_help_description = f"""
 **Preferences**
 You can set bot preferences like so:
-`!mv pref [preference name] [preference value]`
+`{LISTEN_TO}pref [preference name] [preference value]`
 """
 for k, v in pref_help.items():
     pref_help_description = pref_help_description + v
@@ -328,30 +328,46 @@ async def on_message(msg_in):
         e = discord.Embed(title="MoveBot Help")
         e.description = f"""
             This bot can move messages in two different ways.
-            *Moving messages requires to have the 'Manage messages' permission.*
+            *Moving messages requires to have the 'Manage messages' permission in the source and destination channels.*
 
             **Method 1: Using the target message's ID**
-            `!mv [messageID] [optional multi-move] [#targetChannelOrThread] [optional message]`
+            `{LISTEN_TO}[messageID] [optional multi-move] [#targetChannelOrThread] [optional message]`
 
             **examples:**
-            `!mv 964656189155737620 #general`
-            `!mv 964656189155737620 #general This message belongs in general.`
-            `!mv 964656189155737620 +2 #general This message and the 2 after it belongs in general.`
-            `!mv 964656189155737620 -3 #general This message and the 3 before it belongs in general.`
-            `!mv 964656189155737620 ~964656189155737640 #general This message until 964656189155737640 belongs in general.`
+            `{LISTEN_TO}964656189155737620 #general`
+            `{LISTEN_TO}964656189155737620 #general This message belongs in general.`
+            `{LISTEN_TO}964656189155737620 +2 #general This message and the 2 after it belongs in general.`
+            `{LISTEN_TO}964656189155737620 -3 #general This message and the 3 before it belongs in general.`
+            `{LISTEN_TO}964656189155737620 ~964656189155737640 #general This message until 964656189155737640 belongs in general.`
 
             **Method 2: Replying to the target message**
-            `!mv [optional multi-move] [#targetChannelOrThread] [optional message]`
+            `{LISTEN_TO}[optional multi-move] [#targetChannelOrThread] [optional message]`
 
             **examples:**
-            `!mv #general`
-            `!mv #general This message belongs in general.`
-            `!mv +2 #general This message and the 2 after it belongs in general.`
-            `!mv -3 #general This message and the 3 before it belongs in general.`
-            `!mv ~964656189155737640 #general This message until 964656189155737640 belongs in general.`
+            `{LISTEN_TO}#general`
+            `{LISTEN_TO}#general This message belongs in general.`
+            `{LISTEN_TO}+2 #general This message and the 2 after it belongs in general.`
+            `{LISTEN_TO}-3 #general This message and the 3 before it belongs in general.`
+            `{LISTEN_TO}~964656189155737640 #general This message until 964656189155737640 belongs in general.`
+
+            **Options:**
+            You specify custom behaviors by putting / options after the `{LISTEN_TO}`. These will override the preferences described below.
+            `{LISTEN_TO}/delete` Delete the original messages (ie. move them)
+            `{LISTEN_TO}/keep` Do not delete the original messages (ie. act like CopyBot)
+            `{LISTEN_TO}/no-delete` Synonym for `{LISTEN_TO}/keep`
+
+            `{LISTEN_TO}/silent` Do not notify users that their message was moved or copied.
+            `{LISTEN_TO}/dm` Notify users by direct message.
+            `{LISTEN_TO}/mention` Notify users by mentioning them.
+
+            `{LISTEN_TO}/embed` Put the notification in an embedded message. (If notification is enabled.)
+            `{LISTEN_TO}/no-embed` Do not put the notification in an embedded message.
+
+            **examples:**
+            `{LISTEN_TO}/embed /dm /keep -3 #general Copying this message and the three before it to general; notify users by direct messages in embeds.`
+            `{LISTEN_TO}/silent -3 #general Move this message and the three before it to general without notifying users.`
 
             {pref_help_description}
-            **Head over to https://discord.gg/t5N754rmC6 for any questions or suggestions!**"
         """
         async with msg_in.author.typing():
             await msg_in.author.send(embed=e)
@@ -402,9 +418,9 @@ async def on_message(msg_in):
             await update_pref(int(guild_id), params[2], params[3])
             title = "Preferences Updated"
             response_msg = f"**Preference:** `{params[2]}` Updated to `{params[3]}`"
-        e = discord.Embed(title=title)
-        e.description = response_msg
-        await txt_channel.send(embed=e)
+        e = discord.Embed(title=title, description = response_msg)
+        async with msg_in.author.typing():
+            await msg_in.author.send(embed=e)
         return
 
     # !mv [msgID] [optional multi-move] [#channel] [optional message]
@@ -600,7 +616,7 @@ async def on_message(msg_in):
                     # Fall back to deleting one-by-one for this batch if bulk deletion fails.
                     await send_error(txt_channel, None, "Unknown Message", "The bot attempted to delete a message, "
                                       + "but could not find it. Did someone already delete it? "
-                                      + "Was it a part of a `!mv +/-**x** #\channel` command? "
+                                      + f"Was it a part of a `{LISTEN_TO}+/-**x** #\channel` command? "
                                       + "Falling back to deleting messages one-by-one.")
                     sent_delete_failed = True
                 except DiscordException as exc:
@@ -617,7 +633,7 @@ async def on_message(msg_in):
                             await send_error(txt_channel, None, "Unknown Message",
                                              "The bot attempted to delete a message, "
                                              + "but could not find it. Did someone already delete it? "
-                                             + "Was it a part of a `!mv +/-**x** #\channel` command?")
+                                             + f"Was it a part of a `{LISTEN_TO}+/-**x** #\channel` command?")
                             sent_delete_failed = True
             except Exception as exc:
                 await send_error(txt_channel, exc, "Message deletion failed.",
