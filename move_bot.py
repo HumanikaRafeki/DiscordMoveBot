@@ -17,6 +17,9 @@ import discord
 import requests
 import asqlite # using asqlite now since it is asynchronous
 import asyncio # needed for sleep functions
+import datetime
+import random
+import time
 from contextlib import closing
 from discord import Thread
 from discord.ext import commands # this upgrades from `client` to `bot` (per Rapptz's recommendation)
@@ -33,7 +36,6 @@ handler = logging.FileHandler(filename=LOG_PATH, encoding='UTF-8', mode='w')
 handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
 logger.addHandler(handler)
 
-MAX_DELETE = 35 # How many messages to delete at a time in bulk deletion
 TOKEN = os.getenv('DISCORD_TOKEN')
 STATS_TOKEN = os.getenv('STATS_TOKEN', '')
 STATS_ID = os.getenv('MOVEBOT_STATS_ID', 0)
@@ -41,8 +43,15 @@ LISTEN_TO = os.getenv('LISTEN_TO')
 ADMIN_ID = os.getenv('ADMIN_UID')
 BOT_ID = os.getenv('MOVEBOT_ID')
 DB_PATH = os.getenv('DB_PATH')
-MAX_MESSAGES = os.getenv('MAX_MESSAGES')
+MAX_MESSAGES = int(os.getenv('MAX_MESSAGES', '100'))
 DEBUG_MODE = os.getenv('DEBUG_MODE', '')
+BULK_DELETE_MAX_AGE = 24*3600*float(os.getenv('BULK_DELETE_MAX_AGE', '13.9'))
+SEND_SLEEP_TIME = float(os.getenv('SEND_SLEEP_TIME', '2.0'))
+DELETE_SLEEP_TIME = float(os.getenv('DELETE_SLEEP_TIME', '0.1'))
+FETCH_SLEEP_TIME = float(os.getenv('FETCH_SLEEP_TIME', '0.02'))
+FETCH_BLOCK = 35 # Maximum number of messages to fetch at a time using 12345 ~67890 syntax
+MAX_DELETE = 35 # How many messages to delete at a time in bulk deletion
+MAX_SPECIAL_MESSAGES = 20 # Number of messages that may be generated, in addition to copied/moved messages
 
 if LISTEN_TO.rstrip() == LISTEN_TO:
     LISTEN_TO += " "
@@ -256,10 +265,53 @@ You can set bot preferences like so:
 for k, v in pref_help.items():
     pref_help_description = pref_help_description + v
 
+help_description = f"""
+    This bot can move messages in two different ways.
+    *Moving messages requires to have the 'Manage messages' permission in the source and destination channels.*
+
+    **Method 1: Using the target message's ID**
+    `{LISTEN_TO}[messageID] [optional multi-move] [#targetChannelOrThread] [optional message]`
+
+    **examples:**
+    `{LISTEN_TO}964656189155737620 #general`
+    `{LISTEN_TO}964656189155737620 #general This message belongs in general.`
+    `{LISTEN_TO}964656189155737620 +2 #general This message and the 2 after it belongs in general.`
+    `{LISTEN_TO}964656189155737620 -3 #general This message and the 3 before it belongs in general.`
+    `{LISTEN_TO}964656189155737620 ~964656189155737640 #general This message until 964656189155737640 belongs in general.`
+
+    **Method 2: Replying to the target message**
+    `{LISTEN_TO}[optional multi-move] [#targetChannelOrThread] [optional message]`
+
+    **examples:**
+    `{LISTEN_TO}#general`
+    `{LISTEN_TO}#general This message belongs in general.`
+    `{LISTEN_TO}+2 #general This message and the 2 after it belongs in general.`
+    `{LISTEN_TO}-3 #general This message and the 3 before it belongs in general.`
+    `{LISTEN_TO}~964656189155737640 #general This message until 964656189155737640 belongs in general.`
+
+    **Options:**
+    You specify custom behaviors by putting / options after the `{LISTEN_TO}`. These will override the preferences described below.
+    `{LISTEN_TO}/delete` Delete the original messages (ie. move them)
+    `{LISTEN_TO}/keep` Do not delete the original messages (ie. act like CopyBot)
+    `{LISTEN_TO}/no-delete` Synonym for `{LISTEN_TO}/keep`
+
+    `{LISTEN_TO}/silent` Do not notify users that their message was moved or copied.
+    `{LISTEN_TO}/dm` Notify users by direct message.
+    `{LISTEN_TO}/mention` Notify users by mentioning them.
+
+    `{LISTEN_TO}/embed` Put the notification in an embedded message. (If notification is enabled.)
+    `{LISTEN_TO}/no-embed` Do not put the notification in an embedded message.
+
+    **examples:**
+    `{LISTEN_TO}/embed /dm /keep -3 #general Copying this message and the three before it to general; notify users by direct messages in embeds.`
+    `{LISTEN_TO}/silent -3 #general Move this message and the three before it to general without notifying users.`
+     {pref_help_description}
+"""
+
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
-bot = commands.AutoShardedBot(command_prefix='!', intents=intents, max_messages=int(MAX_MESSAGES)) #upgrading to `bot` because it has been preferred for several months. Using `AutoShardedBot` because we are in too many guilds for regular `Bot`. I had been using `max_messages` previously, I think it saves small bandwidth for the bot, and also increases speed when a command is issued. 10,000 messages had a negligible impact @SadPuppies 4/9/23
+bot = commands.AutoShardedBot(command_prefix='!', intents=intents, max_messages=None) #upgrading to `bot` because it has been preferred for several months. Using `AutoShardedBot` because we are in too many guilds for regular `Bot`. I had been using `max_messages` previously, I think it saves small bandwidth for the bot, and also increases speed when a command is issued. 10,000 messages had a negligible impact @SadPuppies 4/9/23
 admin = bot.get_user(ADMIN_ID)
 
 @bot.event
@@ -310,8 +362,6 @@ async def on_message(msg_in):
     txt_channel = msg_in.channel
     mod_channel = discord.utils.get(msg_in.guild.channels, name="mod-log")
     if msg_in.author == bot.user or msg_in.author.bot:
-        send_channel = mod_channel if mod_channel else txt_channel
-        await send_channel.send(f"Ignoring command from <@!{msg_in.author.id}> because they're a bot.")
         return
     if not txt_channel.permissions_for(msg_in.author).manage_messages:
         send_channel = mod_channel if mod_channel else txt_channel
@@ -326,49 +376,7 @@ async def on_message(msg_in):
     # !mv help
     if len(params) < 2 or params[1] == 'help':
         e = discord.Embed(title="MoveBot Help")
-        e.description = f"""
-            This bot can move messages in two different ways.
-            *Moving messages requires to have the 'Manage messages' permission in the source and destination channels.*
-
-            **Method 1: Using the target message's ID**
-            `{LISTEN_TO}[messageID] [optional multi-move] [#targetChannelOrThread] [optional message]`
-
-            **examples:**
-            `{LISTEN_TO}964656189155737620 #general`
-            `{LISTEN_TO}964656189155737620 #general This message belongs in general.`
-            `{LISTEN_TO}964656189155737620 +2 #general This message and the 2 after it belongs in general.`
-            `{LISTEN_TO}964656189155737620 -3 #general This message and the 3 before it belongs in general.`
-            `{LISTEN_TO}964656189155737620 ~964656189155737640 #general This message until 964656189155737640 belongs in general.`
-
-            **Method 2: Replying to the target message**
-            `{LISTEN_TO}[optional multi-move] [#targetChannelOrThread] [optional message]`
-
-            **examples:**
-            `{LISTEN_TO}#general`
-            `{LISTEN_TO}#general This message belongs in general.`
-            `{LISTEN_TO}+2 #general This message and the 2 after it belongs in general.`
-            `{LISTEN_TO}-3 #general This message and the 3 before it belongs in general.`
-            `{LISTEN_TO}~964656189155737640 #general This message until 964656189155737640 belongs in general.`
-
-            **Options:**
-            You specify custom behaviors by putting / options after the `{LISTEN_TO}`. These will override the preferences described below.
-            `{LISTEN_TO}/delete` Delete the original messages (ie. move them)
-            `{LISTEN_TO}/keep` Do not delete the original messages (ie. act like CopyBot)
-            `{LISTEN_TO}/no-delete` Synonym for `{LISTEN_TO}/keep`
-
-            `{LISTEN_TO}/silent` Do not notify users that their message was moved or copied.
-            `{LISTEN_TO}/dm` Notify users by direct message.
-            `{LISTEN_TO}/mention` Notify users by mentioning them.
-
-            `{LISTEN_TO}/embed` Put the notification in an embedded message. (If notification is enabled.)
-            `{LISTEN_TO}/no-embed` Do not put the notification in an embedded message.
-
-            **examples:**
-            `{LISTEN_TO}/embed /dm /keep -3 #general Copying this message and the three before it to general; notify users by direct messages in embeds.`
-            `{LISTEN_TO}/silent -3 #general Move this message and the three before it to general without notifying users.`
-
-            {pref_help_description}
-        """
+        e.description = help_description
         async with msg_in.author.typing():
             await msg_in.author.send(embed=e)
         return
@@ -426,6 +434,7 @@ async def on_message(msg_in):
     # !mv [msgID] [optional multi-move] [#channel] [optional message]
     async with txt_channel.typing():
 
+        logger.info("fetch moved message")
         try:
             moved_msg = await txt_channel.fetch_message(msg_in.reference.message_id if is_reply else params[1])
         except Exception as exc:
@@ -436,17 +445,22 @@ async def on_message(msg_in):
         delete_original = await get_pref(guild_id, "delete_original", override)
         delete_original = int(delete_original)
 
+        logger.info("fetch other messages")
         channel_param = 1 if is_reply else 2
         before_messages = []
         after_messages = []
         if params[channel_param].startswith(('+', '-', '~')):
             value = int(params[channel_param][1:])
+            if params[channel_param][0] in '+-' and value > MAX_MESSAGES-1:
+                await send_error(txt_channel, None, f'Maximum allowed messages is {MAX_MESSAGES}.')
+
             if params[channel_param][0] == '-':
                 before_messages = [m async for m in txt_channel.history(limit=value, before=moved_msg)]
                 before_messages.reverse()
             elif params[channel_param][0] == '+':
                 after_messages = [m async for m in txt_channel.history(limit=value, after=moved_msg)]
             else:
+                logger.info('scan a message range')
                 try:
                     await txt_channel.fetch_message(value)
                 except Exception as exc:
@@ -454,22 +468,21 @@ async def on_message(msg_in):
                                      'An invalid destination message ID was provided.')
                     return
 
-                limit = int(MAX_MESSAGES)
-                while True:
-                    found = False
-                    test_messages = [m async for m in txt_channel.history(limit=limit, after=moved_msg)]
-                    for i, msg in enumerate(test_messages):
-                        if msg.id == value:
-                            after_messages = test_messages[:i+1]
-                            found = True
-                            break
-                        elif msg.id == txt_channel.last_message.id:
-                            await send_error(txt_channel, None, "Cannot find message",
-                                             'Reached the latest message without finding the destination message ID.')
-                            return
+                found = False
+                first = True
+                async for msg in txt_channel.history(limit=MAX_MESSAGES-1, after=moved_msg):
+                    if not first:
+                        time.sleep(FETCH_SLEEP_TIME)
+                    first = False
+                    after_messages.append(msg)
+                    found = msg.id == value
                     if found:
                         break
-                    limit += 100
+                if not found:
+                    await send_error(txt_channel, None, 'Cannot find message',
+                                     f'Destination message {value} is not within {MAX_MESSAGES-1} after first message. '
+                                     'Try moving fewer messages at a time.')
+                    return
 
             channel_param += 1
             leftovers = params[channel_param].split(maxsplit=1)
@@ -479,6 +492,7 @@ async def on_message(msg_in):
             dest_channel = params[channel_param]
             extra_message = f'\n\n{params[channel_param + 1]}' if len(params) > channel_param + 1 else ''
 
+        logger.info("find target channel")
         try:
             target_channel = msg_in.guild.get_channel_or_thread(int(dest_channel.strip('<#').strip('>')))
         except Exception as exc:
@@ -489,7 +503,22 @@ async def on_message(msg_in):
             send_channel = mod_channel if mod_channel else txt_channel
             await send_mod_log(send_channel, f"Ignoring command from user <@!{msg_in.author.id}> because they don't have manage_messages permissions on destination channel <#{target_channel.id}>.")
             return
-        
+
+        logger.info("copy messages")
+        moved, author_map = await copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override)
+
+        logger.info("notify users")
+        await notify_users(msg_in, override, author_map, dest_channel, delete_original, extra_message)
+
+        logger.info("send to mod channel")
+        mod_channel = await send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_original)
+
+        logger.info("delete messages")
+        await delete_messages(msg_in, before_messages + [moved_msg] + after_messages + [msg_in], delete_original)
+
+
+async def copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override):
+        guild_id = msg_in.guild.id
         wb = None
         wbhks = await msg_in.guild.webhooks()
         for wbhk in wbhks:
@@ -510,7 +539,11 @@ async def on_message(msg_in):
         strip_ping = int(await get_pref(guild_id, "strip_ping", override))
         moved = 0
         guild = None
+        first = True
         for msg in before_messages + [moved_msg] + after_messages:
+            if not first:
+                time.sleep(SEND_SLEEP_TIME)
+            first = False
             if guild is None:
                 guild = msg.guild
             msg_content = msg.content.replace('@', '@\u200b') if strip_ping == 1 and '@' in msg.content else msg.content
@@ -540,7 +573,26 @@ async def on_message(msg_in):
                 author_map[msg.author.id] = msg.author
 
             moved = moved + 1
+        return ( moved, author_map )
 
+async def send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_original):
+        if not mod_channel:
+            mod_channel = discord.utils.get(msg_in.guild.channels, name="mod-log")
+        if mod_channel:
+            txt_channel = msg_in.channel
+            description = "CC_OPERATION MESSAGE_COUNT messages from SOURCE_CHANNEL to DESTINATION_CHANNEL, ordered by MOVER_USER."
+            description = description.replace("MESSAGE_COUNT", str(moved)) \
+                                     .replace("SOURCE_CHANNEL", f"<#{txt_channel.id}>") \
+                                     .replace("DESTINATION_CHANNEL", dest_channel) \
+                                     .replace("MOVER_USER", f"`{msg_in.author.name}`") \
+                                     .replace("LC_OPERATION", 'moved' if delete_original else 'copied') \
+                                     .replace("CC_OPERATION", 'Moved' if delete_original else 'Copied')
+            await send_mod_log(mod_channel, description)
+        return mod_channel
+
+async def notify_users(msg_in, override, author_map, dest_channel, delete_original, extra_message):
+        txt_channel = msg_in.channel
+        guild_id = msg_in.guild.id
         notify_dm = await get_pref(guild_id, "notify_dm", override)
         notify_dm = int(notify_dm)
         authors = [author_map[a] for a in author_map]
@@ -574,72 +626,56 @@ async def on_message(msg_in):
                     elif description:
                         await send_obj.send(description)
                 except (discord.NotFound, commands.errors.MessageNotFound) as exc:
-                    pass # probably trying to DM a MoveBot-generated message
-            del send_obj, description, message_users
+                    pass # Probably trying to DM a MoveBot-generated message
 
-        if not mod_channel:
-            mod_channel = discord.utils.get(msg_in.guild.channels, name="mod-log")
-        if mod_channel:
-            description = "CC_OPERATION MESSAGE_COUNT messages from SOURCE_CHANNEL to DESTINATION_CHANNEL, ordered by MOVER_USER."
-            description = description.replace("MESSAGE_COUNT", str(moved)) \
-                                     .replace("SOURCE_CHANNEL", f"<#{txt_channel.id}>") \
-                                     .replace("DESTINATION_CHANNEL", dest_channel) \
-                                     .replace("MOVER_USER", f"`{msg_in.author.name}`") \
-                                     .replace("LC_OPERATION", 'moved' if delete_original else 'copied') \
-                                     .replace("CC_OPERATION", 'Moved' if delete_original else 'Copied')
-            await send_mod_log(mod_channel, description)
+async def delete_messages(msg_in, messages, delete_original): 
+        txt_channel = msg_in.channel
+
+        # Split messages into blocks of MAX_DELETE or less for bulk deletion.
+        bulk_delete = []
+
+        # Messages too old cannot be bulk deleted. We'll delete them one by one instead.
+        one_by_one = []
         
         if delete_original:
-            # Split messages into blocks of MAX_DELETE or less:
-            delete_me = [ [] ]
-            for msg in before_messages + [moved_msg, msg_in] + after_messages:
-                if len(delete_me[-1]) > MAX_DELETE:
-                    delete_me.append([])
-                delete_me[-1].append(msg)
+            for msg in messages:
+                age = (datetime.datetime.now(datetime.timezone.utc) - msg.created_at).total_seconds()
+                if age > BULK_DELETE_MAX_AGE:
+                    one_by_one.append(msg)
+                else:
+                    if not bulk_delete or len(bulk_delete[-1]) > MAX_DELETE:
+                        bulk_delete.append([])
+                    bulk_delete[-1].append(msg)
+            # Special case: only one message. Don't use a bulk deletion:
+            if len(bulk_delete) == 1 and len(bulk_delete[0]) == 1:
+                one_by_one.append(bulk_delete[0][0])
+                bulk_delete = []
         else:
-            delete_me = [ [ msg_in ] ]
+            one_by_one = [ msg_in ]
 
-        # Only warn about failed deletions once:
-        sent_delete_failed = False
-
-        # Loop over all blocks of messages to delete:
-        for delete_list in delete_me:
-            try:
-                if not delete_list:
-                    next
-                # Try deleting messages in bulk if we have more than one:
-                try:
-                    if len(delete_list) > 1:
-                        await txt_channel.delete_messages(delete_list)
-                        continue
-                except (discord.NotFound, commands.errors.MessageNotFound) as exc:
-                    # Fall back to deleting one-by-one for this batch if bulk deletion fails.
-                    await send_error(txt_channel, None, "Unknown Message", "The bot attempted to delete a message, "
-                                      + "but could not find it. Did someone already delete it? "
-                                      + f"Was it a part of a `{LISTEN_TO}+/-**x** #\channel` command? "
-                                      + "Falling back to deleting messages one-by-one.")
-                    sent_delete_failed = True
-                except Exception as exc:
-                    await send_error(txt_channel, exc, "Bulk Deletion Failed",
-                                     f"Could not delete a list of {len(delete_list)} messages in one operation. "
-                                     "Will fall back to deleting one at a time. This could take a while.")
-
-                # Either bulk deletion failed or we have only one message.
-                for msg in delete_list:
-                    try:
-                        await msg.delete()
-                    except (discord.NotFound, commands.errors.MessageNotFound) as exc:
-                        if not sent_delete_failed:
-                            await send_error(txt_channel, None, "Unknown Message",
-                                             "The bot attempted to delete a message, "
-                                             + "but could not find it. Did someone already delete it? "
-                                             + f"Was it a part of a `{LISTEN_TO}+/-**x** #\channel` command?")
-                            sent_delete_failed = True
-            except Exception as exc:
-                await send_error(txt_channel, exc, "Message deletion failed.",
-                                 "Some messages may not have been deleted. "
-                                 + "Please check the permissions (just apply **Admin** to the bot or its role for EasyMode)")
-                raise
+        # Delete messages if desired.
+        first = True
+        try:
+            first = True
+            for delete_list in bulk_delete:
+                if not first:
+                    time.sleep(DELETE_SLEEP_TIME)
+                first = False
+                await txt_channel.delete_messages(delete_list)
+            for msg in one_by_one:
+                if not first:
+                    time.sleep(DELETE_SLEEP_TIME)
+                first = False
+                await msg.delete()
+        except (discord.NotFound, commands.errors.MessageNotFound) as exc:
+            await send_error(txt_channel, exc, "Unknown Message",
+                             "The bot attempted to delete a message, but could not find it. "
+                             "Did someone already delete it? "
+                             + f"Was it a part of a `{LISTEN_TO}+/-**x** #\channel` command?")
+        except Exception as exc:
+            await send_error(txt_channel, exc, "Deletion failed.",
+                             "Some messages may not have been deleted. "
+                             + "Please check the permissions (just apply **Admin** to the bot or its role for EasyMode)")
                 
 #end
 bot.run(TOKEN)
