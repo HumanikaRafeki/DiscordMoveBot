@@ -44,7 +44,7 @@ ADMIN_ID = os.getenv('ADMIN_UID')
 BOT_ID = os.getenv('MOVEBOT_ID')
 DB_PATH = os.getenv('DB_PATH')
 MAX_MESSAGES = int(os.getenv('MAX_MESSAGES', '100'))
-DEBUG_MODE = os.getenv('DEBUG_MODE', '')
+DEBUG_MODE = os.getenv('DEBUG_MODE', '1')
 BULK_DELETE_MAX_AGE = 24*3600*float(os.getenv('BULK_DELETE_MAX_AGE', '13.9'))
 SEND_SLEEP_TIME = float(os.getenv('SEND_SLEEP_TIME', '2.0'))
 DELETE_SLEEP_TIME = float(os.getenv('DELETE_SLEEP_TIME', '0.1'))
@@ -455,10 +455,20 @@ async def on_message(msg_in):
                 await send_error(txt_channel, None, f'Maximum allowed messages is {MAX_MESSAGES}.')
 
             if params[channel_param][0] == '-':
-                before_messages = [m async for m in txt_channel.history(limit=value, before=moved_msg)]
+                first = True
+                async for msg in txt_channel.history(limit=value, before=moved_msg):
+                    if not first:
+                        time.sleep(FETCH_SLEEP_TIME)
+                    first = False
+                    before_messages.append(msg)
                 before_messages.reverse()
             elif params[channel_param][0] == '+':
-                after_messages = [m async for m in txt_channel.history(limit=value, after=moved_msg)]
+                first = True
+                async for msg in txt_channel.history(limit=value, after=moved_msg):
+                    if not first:
+                        time.sleep(FETCH_SLEEP_TIME)
+                    first = False
+                    after_messages.append(msg)
             else:
                 logger.info('scan a message range')
                 try:
@@ -516,18 +526,22 @@ async def on_message(msg_in):
         logger.info("delete messages")
         await delete_messages(msg_in, before_messages + [moved_msg] + after_messages + [msg_in], delete_original)
 
+        logger.info("done")
 
 async def copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override):
+        webhook_name = f'MoveBot {BOT_ID}'
+        logger.info("Find webhook "+webhook_name)
         guild_id = msg_in.guild.id
         wb = None
         wbhks = await msg_in.guild.webhooks()
         for wbhk in wbhks:
-            if wbhk.name == 'MoveBot':
+            if wbhk.name == webhook_name:
                 wb = wbhk
 
         parent_channel = target_channel.parent if isinstance(target_channel, Thread) else target_channel
         if wb is None:
-            wb = await parent_channel.create_webhook(name='MoveBot', reason='Required webhook for MoveBot to function.')
+            logger.info("Create webhook "+webhook_name)
+            wb = await parent_channel.create_webhook(name=webhook_name, reason='Required webhook for MoveBot to function.')
         else:
             if wb.channel != parent_channel:
                 await wb.edit(channel=parent_channel)
@@ -676,6 +690,6 @@ async def delete_messages(msg_in, messages, delete_original):
             await send_error(txt_channel, exc, "Deletion failed.",
                              "Some messages may not have been deleted. "
                              + "Please check the permissions (just apply **Admin** to the bot or its role for EasyMode)")
-                
+            raise
 #end
 bot.run(TOKEN)
