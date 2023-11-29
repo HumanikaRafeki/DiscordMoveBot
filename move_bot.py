@@ -19,7 +19,7 @@ import asqlite # using asqlite now since it is asynchronous
 import asyncio # needed for sleep functions
 import datetime
 import random
-import time
+import asyncio
 from contextlib import closing
 from discord import Thread
 from discord.ext import commands # this upgrades from `client` to `bot` (per Rapptz's recommendation)
@@ -47,7 +47,7 @@ MAX_MESSAGES = int(os.getenv('MAX_MESSAGES', '100'))
 DEBUG_MODE = os.getenv('DEBUG_MODE', '1')
 BULK_DELETE_MAX_AGE = 24*3600*float(os.getenv('BULK_DELETE_MAX_AGE', '13.9'))
 SEND_SLEEP_TIME = float(os.getenv('SEND_SLEEP_TIME', '2.0'))
-DELETE_SLEEP_TIME = float(os.getenv('DELETE_SLEEP_TIME', '0.1'))
+DELETE_SLEEP_TIME = float(os.getenv('DELETE_SLEEP_TIME', '0.5'))
 FETCH_SLEEP_TIME = float(os.getenv('FETCH_SLEEP_TIME', '0.02'))
 FETCH_BLOCK = 35 # Maximum number of messages to fetch at a time using 12345 ~67890 syntax
 MAX_DELETE = 35 # How many messages to delete at a time in bulk deletion
@@ -458,7 +458,7 @@ async def on_message(msg_in):
                 first = True
                 async for msg in txt_channel.history(limit=value, before=moved_msg):
                     if not first:
-                        time.sleep(FETCH_SLEEP_TIME)
+                        await asyncio.sleep(FETCH_SLEEP_TIME)
                     first = False
                     before_messages.append(msg)
                 before_messages.reverse()
@@ -466,7 +466,7 @@ async def on_message(msg_in):
                 first = True
                 async for msg in txt_channel.history(limit=value, after=moved_msg):
                     if not first:
-                        time.sleep(FETCH_SLEEP_TIME)
+                        await asyncio.sleep(FETCH_SLEEP_TIME)
                     first = False
                     after_messages.append(msg)
             else:
@@ -482,7 +482,7 @@ async def on_message(msg_in):
                 first = True
                 async for msg in txt_channel.history(limit=MAX_MESSAGES-1, after=moved_msg):
                     if not first:
-                        time.sleep(FETCH_SLEEP_TIME)
+                        await asyncio.sleep(FETCH_SLEEP_TIME)
                     first = False
                     after_messages.append(msg)
                     found = msg.id == value
@@ -556,7 +556,7 @@ async def copy_messages(before_messages, moved_msg, after_messages, msg_in, targ
         first = True
         for msg in before_messages + [moved_msg] + after_messages:
             if not first:
-                time.sleep(SEND_SLEEP_TIME)
+                await asyncio.sleep(SEND_SLEEP_TIME)
             first = False
             if guild is None:
                 guild = msg.guild
@@ -673,12 +673,12 @@ async def delete_messages(msg_in, messages, delete_original):
             first = True
             for delete_list in bulk_delete:
                 if not first:
-                    time.sleep(DELETE_SLEEP_TIME)
+                    await asyncio.sleep(DELETE_SLEEP_TIME)
                 first = False
                 await txt_channel.delete_messages(delete_list)
             for msg in one_by_one:
                 if not first:
-                    time.sleep(DELETE_SLEEP_TIME)
+                    await asyncio.sleep(DELETE_SLEEP_TIME)
                 first = False
                 await msg.delete()
         except (discord.NotFound, commands.errors.MessageNotFound) as exc:
