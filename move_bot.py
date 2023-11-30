@@ -379,6 +379,7 @@ async def on_message(msg_in):
         e.description = help_description
         async with msg_in.author.typing():
             await msg_in.author.send(embed=e)
+            await delete_messages(msg_in, [msg_in], 1)
         return
 
     elif params[1] == "ping":
@@ -397,22 +398,26 @@ async def on_message(msg_in):
             return
         if guild_id in prefs:
             prefs.pop(guild_id)
-        await reset_prefs(int(guild_id))
-        await txt_channel.send("All preferences reset to default")
+        async with msg_in.author.typing():
+            await reset_prefs(int(guild_id))
+            await txt_channel.send("All preferences reset to default")
+            await delete_messages(msg_in, [msg_in], 1)
         return
 
     # !mv pref [pref_name] [pref_value]
     elif params[1] == "pref":
         title = "Preference Help"
+        send_obj = txt_channel
         if len(params) == 2 or params[2] == "?":
             response_msg = pref_help_description
+            send_obj = msg_in.author
         elif not msg_in.author.guild_permissions.administrator:
             send_channel = mod_channel if mod_channel else txt_channel
             await send_channel.send(f"Refusing request from <@!{msg_in.author.id}> to change preferences because they're not an administrator.")
             return
         elif len(params) > 2 and params[2] not in available_prefs:
             title = "Invalid Preference"
-            response_msg = f"An invalid preference name was provided.\n{pref_help_description}"
+            response_msg = f"Preference name \"{params[2]}\" is invalid.\nType `{LISTEN_TO}pref ?` for help."
         elif len(params) == 3:
             title = "Current Preference"
             response_msg = f"`{params[2]}`: `{await get_pref(guild_id, params[2], override)}`"
@@ -427,25 +432,39 @@ async def on_message(msg_in):
             title = "Preferences Updated"
             response_msg = f"**Preference:** `{params[2]}` Updated to `{params[3]}`"
         e = discord.Embed(title=title, description = response_msg)
-        async with msg_in.author.typing():
-            await msg_in.author.send(embed=e)
+        async with send_obj.typing():
+            await send_obj.send(embed=e)
+            await delete_messages(msg_in, [msg_in], 1)
         return
 
     # !mv [msgID] [optional multi-move] [#channel] [optional message]
     async with txt_channel.typing():
+        moved_msg = await fetch_moved_message(msg_in, params, is_reply)
+        if moved_msg is None:
+            return
 
-        logger.info("fetch moved message")
+        ( extra_message, before_messages, after_messages, dest_channel ) = await fetch_other_messages(is_reply, msg_in, params, moved_msg)
+        if extra_message is None:
+            return
+
+        target_channel = await find_target_channel(msg_in, dest_channel, mod_channel)
+        moved, author_map = await copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override)
+        delete_original = int(await get_pref(guild_id, "delete_original", override))
+        await notify_users(msg_in, override, author_map, dest_channel, delete_original, extra_message)
+        mod_channel = await send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_original)
+        await delete_messages(msg_in, before_messages + [moved_msg] + after_messages + [msg_in], delete_original)
+
+async def fetch_moved_message(msg_in, params, is_reply):
+        txt_channel = msg_in.channel
         try:
-            moved_msg = await txt_channel.fetch_message(msg_in.reference.message_id if is_reply else params[1])
+            return await txt_channel.fetch_message(msg_in.reference.message_id if is_reply else params[1])
         except Exception as exc:
             await send_error(txt_channel, exc, "Cannot find message",
                               "You can ignore the message ID by executing the **move** command as a reply to the target message.")
-            return
+            return None
 
-        delete_original = await get_pref(guild_id, "delete_original", override)
-        delete_original = int(delete_original)
-
-        logger.info("fetch other messages")
+async def fetch_other_messages(is_reply, msg_in, params, moved_msg):
+        txt_channel = msg_in.channel
         channel_param = 1 if is_reply else 2
         before_messages = []
         after_messages = []
@@ -476,7 +495,7 @@ async def on_message(msg_in):
                 except Exception as exc:
                     await send_error(txt_channel, exc, "Cannot find message",
                                      'An invalid destination message ID was provided.')
-                    return
+                    return ( None, None, None, None )
 
                 found = False
                 first = True
@@ -492,7 +511,7 @@ async def on_message(msg_in):
                     await send_error(txt_channel, None, 'Cannot find message',
                                      f'Destination message {value} is not within {MAX_MESSAGES-1} after first message. '
                                      'Try moving fewer messages at a time.')
-                    return
+                    return ( None, None, None, None )
 
             channel_param += 1
             leftovers = params[channel_param].split(maxsplit=1)
@@ -501,32 +520,20 @@ async def on_message(msg_in):
         else:
             dest_channel = params[channel_param]
             extra_message = f'\n\n{params[channel_param + 1]}' if len(params) > channel_param + 1 else ''
+        return ( extra_message, before_messages, after_messages, dest_channel )
 
-        logger.info("find target channel")
+async def find_target_channel(msg_in, dest_channel, mod_channel):
         try:
             target_channel = msg_in.guild.get_channel_or_thread(int(dest_channel.strip('<#').strip('>')))
         except Exception as exc:
             await send_error(txt_channel, exc, "Cannot find channel.", "An invalid channel or thread was provided.")
-            return
+            return None
 
         if not target_channel.permissions_for(msg_in.author).manage_messages:
             send_channel = mod_channel if mod_channel else txt_channel
             await send_mod_log(send_channel, f"Ignoring command from user <@!{msg_in.author.id}> because they don't have manage_messages permissions on destination channel <#{target_channel.id}>.")
-            return
-
-        logger.info("copy messages")
-        moved, author_map = await copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override)
-
-        logger.info("notify users")
-        await notify_users(msg_in, override, author_map, dest_channel, delete_original, extra_message)
-
-        logger.info("send to mod channel")
-        mod_channel = await send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_original)
-
-        logger.info("delete messages")
-        await delete_messages(msg_in, before_messages + [moved_msg] + after_messages + [msg_in], delete_original)
-
-        logger.info("done")
+            return None
+        return target_channel
 
 async def copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override):
         webhook_name = f'MoveBot {BOT_ID}'
