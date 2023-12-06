@@ -20,6 +20,7 @@ import asyncio # needed for sleep functions
 import datetime
 import random
 import asyncio
+import copy
 from contextlib import closing
 from discord import Thread
 from discord.ext import commands # this upgrades from `client` to `bot` (per Rapptz's recommendation)
@@ -158,7 +159,7 @@ async def get_pref(guild_id, pref, override):
 
 async def update_pref(guild_id, pref, value): #This needs to be it's own function so that it can be `async`
     if guild_id not in prefs:
-        prefs[guild_id] = {"notify_dm": 0, "embed_message": 0, "move_message": "", "strip_ping": 0, "delete_original": 1}
+        prefs[guild_id] = copy.deepcopy(available_prefs)
         prefs[guild_id][pref] = value
         async with asqlite.connect(DB_PATH) as connection:
             async with connection.cursor() as cursor:
