@@ -57,6 +57,40 @@ MAX_SPECIAL_MESSAGES = 20 # Number of messages that may be generated, in additio
 if LISTEN_TO.rstrip() == LISTEN_TO:
     LISTEN_TO += " "
 
+some_words = [
+"aero", "alizarin", "almond", "amazon", "amber", "amethyst", "apricot", "aqua",
+"aquamarine", "aureolin", "azure", "beaver", "beige", "bisque", "bistre",
+"black", "blue", "blue-violet", "bluetiful", "blush", "bole", "bone", "bronze",
+"brown", "buff", "burgundy", "burlywood", "byzantine", "byzantium", "camel",
+"canary", "cardinal", "carmine", "carnelian", "catawba", "celadon", "celeste",
+"cerise", "cerulean", "champagne", "charcoal", "chestnut", "cinereous",
+"cinnabar", "citrine", "citron", "claret", "coffee", "copper", "coquelicot",
+"coral", "cordovan", "corn", "cornsilk", "cream", "crimson", "cyan",
+"cyclamen", "dandelion", "denim", "desert", "ebony", "ecru", "eggplant",
+"eggshell", "emerald", "eminence", "erin", "fallow", "fandango", "fawn",
+"finn", "firebrick", "flame", "flax", "flirt", "frostbite", "fuchsia",
+"fulvous", "gainsboro", "gamboge", "glaucous", "goldenrod", "green",
+"green-blue", "gunmetal", "harlequin", "heliotrope", "iceberg", "inchworm",
+"independence", "indigo", "irresistible", "isabelline", "ivory", "jasmine",
+"jet", "jonquil", "keppel", "kobe", "kobi", "kobicha", "lava", "lemon",
+"nickel", "nyanza", "ochre", "olive", "olivine", "onyx", "opal", "orange",
+"orange-red", "orange-yellow", "orchid", "oxblood", "parchment", "patriarch",
+"paua", "peach", "pear", "periwinkle", "persimmon", "phlox", "pink",
+"pistachio", "platinum", "plum", "popstar", "prune", "puce", "pumpkin",
+"purple", "purpureus", "rajah", "raspberry", "razzmatazz", "red", "red-orange",
+"red-purple", "red-violet", "redwood", "rhythm", "rose", "rosewood", "ruber",
+"ruby", "rufous", "russet", "rust", "saffron", "sage", "salmon", "sand",
+"sapphire", "scarlet", "seance", "seashell", "secret", "sepia", "shadow",
+"sienna", "silver", "sinopia", "skobeloff", "smitten", "snow", "straw",
+"strawberry", "sunglow", "sunray", "sunset", "tan", "tangerine", "taupe",
+"teal", "technobotanica", "telemagenta", "thistle", "timberwolf", "tomato",
+"tourmaline", "tumbleweed", "turquoise", "tuscan", "tuscany", "ultramarine",
+"umber", "vanilla", "verdigris", "vermilion", "vermilion", "veronica",
+"violet", "violet-blue", "violet-red", "viridian", "volt", "wheat", "white",
+"wine", "wisteria", "xanadu", "xanthic", "xanthous", "yellow", "yellow-green",
+"zaffre", "zomp"
+]
+
 available_prefs = {
     "notify_dm": "0",
     "embed_message": "0",
@@ -198,7 +232,7 @@ async def reset_prefs(guild_id):
             await cursor.close()
             await connection.commit()
 
-async def send_error(send_obj, exception, title, details):
+async def send_info(send_obj, exception, title, details):
     e = discord.Embed(title = title, description = details)
     if DEBUG_MODE and exception:
         e.description += "\n" + "Discord error message: " + str(exception)
@@ -208,7 +242,7 @@ async def send_mod_log(send_obj, message):
     try:
         await send_obj.send(message)
     except Exception as exc:
-        await send_error(send_obj, exc, "Moderation log inaccessible",
+        await send_info(send_obj, exc, "Moderation log inaccessible",
                    "Unable to log a moderation action.")
 
 def split_pair(arg):
@@ -227,7 +261,7 @@ def parse_args(arg, maxsplit):
     opts = set()
     while rest and len(args)<maxsplit:
         this, rest = split_pair(rest)
-        
+
         if this and this[0] == '/':
             opts.add(this)
         else:
@@ -255,7 +289,7 @@ async def make_prefs_from(send_obj, opts):
     if invalid:
         invalids = ", ".join(sorted(invalid))
         s = 's' if len(invalid) > 1 else ''
-        await send_error(send_obj, None, "Invalid option", f"Ignoring unrecognized option{s}: {invalids}")
+        await send_info(send_obj, None, "Invalid option", f"Ignoring unrecognized option{s}: {invalids}")
     return override
 
 pref_help_description = f"""
@@ -312,8 +346,14 @@ help_description = f"""
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
-bot = commands.AutoShardedBot(command_prefix='!', intents=intents, max_messages=None) #upgrading to `bot` because it has been preferred for several months. Using `AutoShardedBot` because we are in too many guilds for regular `Bot`. I had been using `max_messages` previously, I think it saves small bandwidth for the bot, and also increases speed when a command is issued. 10,000 messages had a negligible impact @SadPuppies 4/9/23
+bot = commands.AutoShardedBot(command_prefix=LISTEN_TO[0], intents=intents, max_messages=None) #upgrading to `bot` because it has been preferred for several months. Using `AutoShardedBot` because we are in too many guilds for regular `Bot`. I had been using `max_messages` previously, I think it saves small bandwidth for the bot, and also increases speed when a command is issued. 10,000 messages had a negligible impact @SadPuppies 4/9/23
 admin = bot.get_user(ADMIN_ID)
+bot_name = 'MoveBot'
+if bot.user and bot.user.name:
+    bot_name = bot.user.name
+
+async def random_thread_name():
+    return ' '.join([ random.choice(some_words) for x in range(3) ]) + ' ' + bot_name
 
 @bot.event
 async def on_ready():
@@ -449,7 +489,9 @@ async def on_message(msg_in):
             return
 
         target_channel = await find_target_channel(msg_in, dest_channel, mod_channel)
-        moved, author_map = await copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override)
+        moved, author_map, new_channel = await copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override, await random_thread_name())
+        if new_channel:
+            dest_channel = f'<#{new_channel.id}>'
         delete_original = int(await get_pref(guild_id, "delete_original", override))
         await notify_users(msg_in, override, author_map, dest_channel, delete_original, extra_message)
         mod_channel = await send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_original)
@@ -460,7 +502,7 @@ async def fetch_moved_message(msg_in, params, is_reply):
         try:
             return await txt_channel.fetch_message(msg_in.reference.message_id if is_reply else params[1])
         except Exception as exc:
-            await send_error(txt_channel, exc, "Cannot find message",
+            await send_info(txt_channel, exc, "Cannot find message",
                               "You can ignore the message ID by executing the **move** command as a reply to the target message.")
             return None
 
@@ -472,7 +514,7 @@ async def fetch_other_messages(is_reply, msg_in, params, moved_msg):
         if params[channel_param].startswith(('+', '-', '~')):
             value = int(params[channel_param][1:])
             if params[channel_param][0] in '+-' and value > MAX_MESSAGES-1:
-                await send_error(txt_channel, None, f'Maximum allowed messages is {MAX_MESSAGES}.')
+                await send_info(txt_channel, None, f'Maximum allowed messages is {MAX_MESSAGES}.')
 
             if params[channel_param][0] == '-':
                 first = True
@@ -494,7 +536,7 @@ async def fetch_other_messages(is_reply, msg_in, params, moved_msg):
                 try:
                     await txt_channel.fetch_message(value)
                 except Exception as exc:
-                    await send_error(txt_channel, exc, "Cannot find message",
+                    await send_info(txt_channel, exc, "Cannot find message",
                                      'An invalid destination message ID was provided.')
                     return ( None, None, None, None )
 
@@ -509,7 +551,7 @@ async def fetch_other_messages(is_reply, msg_in, params, moved_msg):
                     if found:
                         break
                 if not found:
-                    await send_error(txt_channel, None, 'Cannot find message',
+                    await send_info(txt_channel, None, 'Cannot find message',
                                      f'Destination message {value} is not within {MAX_MESSAGES-1} after first message. '
                                      'Try moving fewer messages at a time.')
                     return ( None, None, None, None )
@@ -521,22 +563,31 @@ async def fetch_other_messages(is_reply, msg_in, params, moved_msg):
         else:
             dest_channel = params[channel_param]
             extra_message = f'\n\n{params[channel_param + 1]}' if len(params) > channel_param + 1 else ''
+        if len(dest_channel) > 1 and dest_channel[0] != '<' and dest_channel[1] in '0123456789':
+            logger.info('adding <> to dest_channel '+ dest_channel)
+            dest_channel = '<'+dest_channel+'>'
         return ( extra_message, before_messages, after_messages, dest_channel )
 
 async def find_target_channel(msg_in, dest_channel, mod_channel):
         try:
             target_channel = msg_in.guild.get_channel_or_thread(int(dest_channel.strip('<#').strip('>')))
         except Exception as exc:
-            await send_error(txt_channel, exc, "Cannot find channel.", "An invalid channel or thread was provided.")
+            await send_info(txt_channel, exc, "Cannot find channel.", "An invalid channel or thread was provided.")
             return None
 
         if not target_channel.permissions_for(msg_in.author).manage_messages:
             send_channel = mod_channel if mod_channel else txt_channel
             await send_mod_log(send_channel, f"Ignoring command from user <@!{msg_in.author.id}> because they don't have manage_messages permissions on destination channel <#{target_channel.id}>.")
             return None
+
+        if target_channel.type == discord.ChannelType.forum and not target_channel.permissions_for(msg_in.author).create_public_threads:
+            send_channel = mod_channel if mod_channel else txt_channel
+            await send_mod_log(send_channel, f"Ignoring command from user <@!{msg_in.author.id}> because they don't have create_public_threads permissions on destination forum <#{target_channel.id}>.")
+            return None
+
         return target_channel
 
-async def copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override):
+async def copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override, new_thread_name: str):
         webhook_name = f'MoveBot {BOT_ID}'
         logger.info("Find webhook "+webhook_name)
         guild_id = msg_in.guild.id
@@ -553,9 +604,9 @@ async def copy_messages(before_messages, moved_msg, after_messages, msg_in, targ
         else:
             if wb.channel != parent_channel:
                 await wb.edit(channel=parent_channel)
-        if moved_msg.reactions:
-            global reactionss
-            reactionss = moved_msg.reactions
+        is_forum = target_channel.type == discord.ChannelType.forum
+
+        new_thread = None
 
         author_map = {}
         strip_ping = int(await get_pref(guild_id, "strip_ping", override))
@@ -565,6 +616,7 @@ async def copy_messages(before_messages, moved_msg, after_messages, msg_in, targ
         for msg in before_messages + [moved_msg] + after_messages:
             if not first:
                 await asyncio.sleep(SEND_SLEEP_TIME)
+            make_thread = is_forum and first
             first = False
             if guild is None:
                 guild = msg.guild
@@ -577,25 +629,34 @@ async def copy_messages(before_messages, moved_msg, after_messages, msg_in, targ
                 await file.save(f)
                 files.append(discord.File(f, filename=file.filename))
 
-            if isinstance(target_channel, Thread):
-                sm = await wb.send(content=msg_content, username=msg.author.display_name, avatar_url=msg.author.avatar, embeds=msg.embeds, files=files, thread=target_channel, wait=True)
-                if moved_msg.reactions:
-                    for r in reactionss:
-                        if not isinstance(r.emoji, discord.PartialEmoji):
-                            await sm.add_reaction(r.emoji)
+            from_id = msg.id
 
-            else:
-                sm = await wb.send(content=msg_content, username=msg.author.display_name, avatar_url=msg.author.avatar, embeds=msg.embeds, files=files, wait=True)
-                if moved_msg.reactions:
-                    for r in reactionss:
-                        if not isinstance(r.emoji, discord.PartialEmoji):
-                            await sm.add_reaction(r.emoji)
+            kwargs = {
+                'content':msg_content,
+                'username':msg.author.display_name,
+                'avatar_url':msg.author.avatar,
+                'embeds':msg.embeds,
+                'files':files,
+                'wait':True,
+            }
+
+            if make_thread:
+                kwargs['thread_name'] = new_thread_name
+            elif is_forum:
+                kwargs['thread'] = new_thread
+            elif isinstance(target_channel, Thread):
+                kwargs['thread'] = target_channel
+
+            sm = await(wb.send(**kwargs))
+
+            if make_thread:
+                new_thread = sm.channel
 
             if msg.author.id not in author_map:
                 author_map[msg.author.id] = msg.author
 
             moved = moved + 1
-        return ( moved, author_map )
+        return ( moved, author_map, new_thread )
 
 async def send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_original):
         if not mod_channel:
@@ -633,6 +694,8 @@ async def notify_users(msg_in, override, author_map, dest_channel, delete_origin
                 else:
                     message_users = f'{", ".join(author_ids[:-1])}{"," if len(author_ids) > 2 else ""} and {author_ids[-1]}'
                 description = await get_pref(guild_id, "move_message", override)
+                if not description:
+                    description = available_prefs['move_message']
                 description = description.replace("MESSAGE_USER", message_users) \
                     .replace("DESTINATION_CHANNEL", dest_channel) \
                     .replace("MOVER_USER", f"<@!{msg_in.author.id}>") \
@@ -650,7 +713,16 @@ async def notify_users(msg_in, override, author_map, dest_channel, delete_origin
                 except (discord.NotFound, commands.errors.MessageNotFound) as exc:
                     pass # Probably trying to DM a MoveBot-generated message
 
-async def delete_messages(msg_in, messages, delete_original): 
+def without_duplicates(messages):
+    used = set()
+    nodup = []
+    for msg in messages:
+        if msg.id not in used:
+            used.add(msg.id)
+            nodup.append(msg)
+    return nodup
+
+async def delete_messages(msg_in, messages, delete_original):
         txt_channel = msg_in.channel
 
         # Split messages into blocks of MAX_DELETE or less for bulk deletion.
@@ -658,9 +730,9 @@ async def delete_messages(msg_in, messages, delete_original):
 
         # Messages too old cannot be bulk deleted. We'll delete them one by one instead.
         one_by_one = []
-        
+
         if delete_original:
-            for msg in messages:
+            for msg in without_duplicates(messages):
                 age = (datetime.datetime.now(datetime.timezone.utc) - msg.created_at).total_seconds()
                 if age > BULK_DELETE_MAX_AGE:
                     one_by_one.append(msg)
@@ -690,12 +762,12 @@ async def delete_messages(msg_in, messages, delete_original):
                 first = False
                 await msg.delete()
         except (discord.NotFound, commands.errors.MessageNotFound) as exc:
-            await send_error(txt_channel, exc, "Unknown Message",
+            await send_info(txt_channel, exc, "Unknown Message",
                              "The bot attempted to delete a message, but could not find it. "
                              "Did someone already delete it? "
                              + f"Was it a part of a `{LISTEN_TO}+/-**x** #\channel` command?")
         except Exception as exc:
-            await send_error(txt_channel, exc, "Deletion failed.",
+            await send_info(txt_channel, exc, "Deletion failed.",
                              "Some messages may not have been deleted. "
                              + "Please check the permissions (just apply **Admin** to the bot or its role for EasyMode)")
             raise
