@@ -183,27 +183,61 @@ async def db_init():
 
 asyncio.run(db_init())
 
-class MoveBotInUse(Exception):
+class MoveBotException(Exception):
     def __init__(self,where,operation):
         self.where = str(where)
         self.operation = str(operation)
     def description(self):
         return f'{self.where} said this:\n\t\t{self.operation}\n'
 
-class MoveBotLock:
+class MoveBotWebhookInUse(MoveBotException): pass
+class MoveBotAborted(MoveBotException): pass
+
+class MoveBotWebhookLock:
     guilds=dict()
     def __init__(self,guild_id,where,operation):
         self.guild_id = guild_id
         self.where = str(where)
         self.operation = str(operation)
     def __enter__(self):
-        where_op = MoveBotLock.guilds.get(self.guild_id,None)
+        where_op = MoveBotWebhookLock.guilds.get(self.guild_id,None)
         if where_op:
-            raise MoveBotInUse(where_op[0], where_op[1])
-        MoveBotLock.guilds[self.guild_id] = [self.where, self.operation]
+            raise MoveBotWebhookInUse(where_op[0], where_op[1])
+        MoveBotWebhookLock.guilds[self.guild_id] = [self.where, self.operation]
     def __exit__(self,a,b,c):
-        del MoveBotLock.guilds[self.guild_id]
+        del MoveBotWebhookLock.guilds[self.guild_id]
         return None
+
+class MoveBotAborter:
+    in_use=collections.defaultdict(set)
+    def __init__(self,log_channel,guild_id,where,operation):
+        self.guild_id = guild_id
+        self.where = str(where)
+        self.operation = str(operation)
+        self.abort_info = None
+        self.log_channel = log_channel
+    async def __aenter__(self):
+        MoveBotAborter.in_use[self.guild_id].add(self)
+    async def __aexit__(self,exc_type,exc_value,traceback):
+        MoveBotAborter.in_use[self.guild_id].remove(self)
+        if exc_type is MoveBotAborted and self.log_channel:
+            await send_info(self.log_channel, None, 'Operation Aborted',
+                      f'This operation by {self.where}:\n{self.operation}\nwas aborted by request of {exc_value.where}')
+            return True
+        return False
+    def abort(self,where,operation):
+        self.abort_info = [where,operation]
+    def checkpoint(self):
+        if self.abort_info:
+            abort_info = self.abort_info
+            self.abort_info = None
+            raise MoveBotAborted(*abort_info)
+    def abort_others(self):
+        for movebot in MoveBotAborter.in_use[self.guild_id]:
+            if movebot is not self:
+                movebot.abort(self.where,self.operation)
+    def movebots_in_guild(self):
+        return iter(MoveBotAborter.in_use[self.guild_id])
 
 class Sleeper:
     def __init__(self,naptime):
@@ -406,6 +440,7 @@ def as_channel_id(text: str):
     else:
         return None
 
+
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
@@ -472,7 +507,12 @@ async def on_message(msg_in):
         async with msg_in.author.typing():
             await msg_in.author.send(embed=e)
             await msg_in.channel.send(f'Sent help to <@!{msg_in.author.id}> in a direct message.')
-            await delete_messages(msg_in.channel, [msg_in])
+            await delete_messages(None, msg_in.channel, [msg_in])
+        return
+
+    elif params[1] == 'abort':
+        await abort_movebot(msg_in)
+        delete_messages(None, msg_in.channel, [msg_in])
         return
 
     elif params[1] == "ping":
@@ -494,7 +534,7 @@ async def on_message(msg_in):
         async with msg_in.author.typing():
             await reset_prefs(int(guild_id))
             await txt_channel.send("All preferences reset to default")
-            await delete_messages(msg_in.channel, [msg_in])
+            await delete_messages(None, msg_in.channel, [msg_in])
         return
 
     # !mv pref [pref_name] [pref_value]
@@ -527,15 +567,18 @@ async def on_message(msg_in):
         e = discord.Embed(title=title, description = response_msg)
         async with send_obj.typing():
             await send_obj.send(embed=e)
-            await delete_messages(msg_in.channel, [msg_in])
+            await delete_messages(None, msg_in.channel, [msg_in])
         return
 
     # !mv [msgID] [optional multi-move] [#channel] [optional message]
-    async with txt_channel.typing():
+    action = f'<@!{msg_in.author.id}> in <#{msg_in.channel.id}> with {msg_in.jump_url}'
+    aborter = MoveBotAborter(msg_in.channel, guild_id, action, msg_in.content)
+    async with txt_channel.typing(), aborter:
+        assert(aborter)
         moved_msg, source_channel = await fetch_moved_message(msg_in, params, is_reply)
         if moved_msg is None:
             return
-        ( extra_message, before_messages, after_messages, dest_channel ) = await fetch_other_messages(is_reply, msg_in, params, moved_msg, source_channel)
+        ( extra_message, before_messages, after_messages, dest_channel ) = await fetch_other_messages(aborter, is_reply, msg_in, params, moved_msg, source_channel)
         if extra_message is None:
             return
         target_channel = await find_target_channel(msg_in, dest_channel, mod_channel)
@@ -550,10 +593,9 @@ async def on_message(msg_in):
             different_target = False
         
         try:
-            with MoveBotLock(msg_in.guild.id, f'<@!{msg_in.author.id}> in <#{msg_in.channel.id}> with {msg_in.jump_url}',
-                             msg_in.content):
-                moved, author_map, new_channel = await copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override, make_thread_named)
-        except MoveBotInUse as exc:
+            with MoveBotWebhookLock(msg_in.guild.id, action, msg_in.content):
+                moved, author_map, new_channel = await copy_messages(aborter, before_messages, moved_msg, after_messages, msg_in, target_channel, override, make_thread_named)
+        except MoveBotWebhookInUse as exc:
             await send_info(txt_channel, None, "MoveBot is in Use",
                             f"{bot_name} is copying messages in this server right now. You must wait for it to finish before asking it to copy again.\n{exc.description()}")
             return
@@ -562,12 +604,43 @@ async def on_message(msg_in):
             dest_channel = f'<#{new_channel.id}>'
 
         delete_original = int(await get_pref(guild_id, "delete_original", override))
-        await notify_users(msg_in, override, author_map, dest_channel, delete_original, extra_message, source_channel)
+        await notify_users(aborter, msg_in, override, author_map, dest_channel, delete_original, extra_message, source_channel)
         mod_channel = await send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_original, source_channel)
         if delete_original:
-            await delete_messages(txt_channel, before_messages + [moved_msg] + after_messages)
-        # Always delete the command last:
-        await delete_messages(msg_in.channel, [msg_in])
+            await delete_messages(aborter, txt_channel, before_messages + [moved_msg] + after_messages + [msg_in])
+        else:
+            await delete_messages(aborter, msg_in.channel, [msg_in])
+
+async def abort_movebot(msg_in):
+        action = f'<@!{msg_in.author.id}> in <#{msg_in.channel.id}>'
+        aborter = MoveBotAborter(msg_in.channel, msg_in.guild.id, action, msg_in.content)
+        async with msg_in.channel.typing(), aborter:
+            active = [ mb for mb in aborter.movebots_in_guild() if mb is not aborter ]
+            active.sort()
+            status = 'Aborting all running MoveBot operations on this server:\n' + '\n'.join([ f'{mb.where}\n{mb.operation}' for mb in active ])
+            if not active:
+                msg_in.channel.send('There are no operations to abort!')
+                return
+            mod_channel = discord.utils.get(msg_in.guild.channels, name="mod-log")
+            if mod_channel:
+                await mod_channel.send(content=f'<@!{msg_in.author.id}> is aborting all running MoveBot operations.')
+            status_message = await msg_in.channel.send(status)
+            for tries in range(30):
+                aborter.abort_others()
+                await asyncio.sleep(1)
+                new_active = [ mb for mb in aborter.movebots_in_guild() if mb is not aborter ]
+                new_active.sort()
+                if active != new_active:
+                    active = new_active
+                    if active:
+                        status = 'Aborting all running MoveBot operations on this server:\n' + '\n'.join([ f'{mb.where}\n{mb.operation}' for mb in active ])
+                        await status_message.edit(content=status)
+                    else:
+                        await status_message.edit(content=f'All running MoveBot operations on this server have been aborted by request of <@!{msg_in.author.id}>')
+                        return
+            status = 'Failed to abort some MoveBot operations:\n' + '\n'.join([ f'{mb.where}\n{mb.operation}' for mb in active ])
+            await status_message.edit(content = status)
+
 
 async def fetch_moved_message(msg_in, params, is_reply):
         txt_channel = msg_in.channel
@@ -597,7 +670,7 @@ async def fetch_moved_message(msg_in, params, is_reply):
                               "You can ignore the message ID by executing the **move** command as a reply to the target message.")
             return None,None
 
-async def fetch_other_messages(is_reply, msg_in, params, moved_msg, source_channel):
+async def fetch_other_messages(aborter, is_reply, msg_in, params, moved_msg, source_channel):
         txt_channel = msg_in.channel
         channel_param = 1 if is_reply else 2
         before_messages = []
@@ -606,6 +679,7 @@ async def fetch_other_messages(is_reply, msg_in, params, moved_msg, source_chann
         if source_channel:
             count = 0
             async for msg in source_channel.history(before=moved_msg):
+                aborter.checkpoint()
                 await sleeper.nap()
                 count += 1
                 if count > MAX_MESSAGES:
@@ -622,10 +696,12 @@ async def fetch_other_messages(is_reply, msg_in, params, moved_msg, source_chann
             if params[channel_param][0] == '-':
                 async for msg in txt_channel.history(limit=value, before=moved_msg):
                     await sleeper.nap()
+                    aborter.checkpoint()
                     before_messages.append(msg)
             elif params[channel_param][0] == '+':
                 async for msg in txt_channel.history(limit=value, after=moved_msg):
                     await sleeper.nap()
+                    aborter.checkpoint()
                     after_messages.append(msg)
             else:
                 try:
@@ -637,6 +713,7 @@ async def fetch_other_messages(is_reply, msg_in, params, moved_msg, source_chann
 
                 found = False
                 async for msg in txt_channel.history(limit=MAX_MESSAGES-1, after=moved_msg):
+                    aborter.checkpoint()
                     await sleeper.nap()
                     after_messages.append(msg)
                     found = msg.id == value
@@ -679,7 +756,7 @@ async def find_target_channel(msg_in, dest_channel, mod_channel):
 
         return target_channel
 
-async def copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override, make_thread_named: str):
+async def copy_messages(aborter, before_messages, moved_msg, after_messages, msg_in, target_channel, override, make_thread_named: str):
         webhook_name = f'MoveBot {BOT_ID}'
         guild_id = msg_in.guild.id
         wb = None
@@ -703,6 +780,7 @@ async def copy_messages(before_messages, moved_msg, after_messages, msg_in, targ
         guild = None
         send_sleeper = Sleeper(SEND_SLEEP_TIME)
         for msg in before_messages + [moved_msg] + after_messages:
+            aborter.checkpoint()
             make_thread = not send_sleeper.has_slept() and make_thread_named
             await send_sleeper.nap()
             if guild is None:
@@ -765,7 +843,7 @@ async def send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_o
             await send_mod_log(mod_channel, description)
         return mod_channel
 
-async def notify_users(msg_in, override, author_map, dest_channel, delete_original, extra_message, source_channel):
+async def notify_users(aborter, msg_in, override, author_map, dest_channel, delete_original, extra_message, source_channel):
         guild_id = msg_in.guild.id
         notify_dm = int(await get_pref(guild_id, "notify_dm", override))
         authors = [author_map[a] for a in author_map]
@@ -777,6 +855,7 @@ async def notify_users(msg_in, override, author_map, dest_channel, delete_origin
             send_objs = [source_channel if source_channel else msg_in.channel]
         if notify_dm != 2:
             for send_obj in send_objs:
+                aborter.checkpoint()
                 if notify_dm == 1:
                     message_users = f"<@!{send_obj.id}>"
                 elif len(author_ids) == 1:
@@ -805,7 +884,7 @@ async def notify_users(msg_in, override, author_map, dest_channel, delete_origin
                     await send_info(msg_in.channel, exc, "Cannot send message",
                                     f'Unable to send notification message to {to}')
 
-async def delete_messages(log_channel, messages):
+async def delete_messages(aborter, log_channel, messages):
         # Split messages into blocks of MAX_DELETE or less for bulk deletion.
         bulk_delete = {}
 
@@ -815,7 +894,7 @@ async def delete_messages(log_channel, messages):
         # Detect and discard duplicates:
         seen = set()
 
-        for msg in without_duplicates(messages):
+        for msg in messages:
             if not msg or not msg.channel or msg.id in seen:
                 continue
             seen.add(msg.id)
@@ -833,9 +912,13 @@ async def delete_messages(log_channel, messages):
             delete_sleeper = Sleeper(DELETE_SLEEP_TIME)
             for channel,channel_bulk_delete in bulk_delete.items():
                 for batch in channel_bulk_delete:
-                        await delete_sleeper.nap()
-                        await channel.delete_messages(batch)
+                    if aborter:
+                        aborter.checkpoint()
+                    await delete_sleeper.nap()
+                    await channel.delete_messages(batch)
             for msg in one_by_one:
+                if aborter:
+                    aborter.checkpoint()
                 await delete_sleeper.nap()
                 await msg.delete()
             return True
