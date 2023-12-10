@@ -113,7 +113,7 @@ pref_help = {
 **example:**
 `{LISTEN_TO}pref notify_dm 1`
     """,
-    "embed_message": """
+    "embed_message": f"""
 
 **name:** `embed_message`
 **value:**
@@ -123,7 +123,7 @@ pref_help = {
 **example:**
 `{LISTEN_TO}pref embed_message 1`
     """,
-    "move_message": """
+    "move_message": f"""
 
 **name:** `move_message`
 **value:** main message sent to the user.
@@ -132,7 +132,7 @@ pref_help = {
 **example:**
 `{LISTEN_TO}pref send_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`""",
 
-    "strip_ping": """
+    "strip_ping": f"""
 **name:** `strip_ping`
 **value:**
 `0` Do not strip pings
