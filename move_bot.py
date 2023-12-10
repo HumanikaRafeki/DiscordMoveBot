@@ -147,6 +147,7 @@ pref_help = {
 **value:**
 `0` Do not delete the original (basically turns the bot into CopyBot)
 `1` Deletes the original message (the default functionality)
+`2` Also delete messages that MoveBot could not copy.
 
 **example:**
 `{LISTEN_TO}pref delete_original 0`
@@ -361,6 +362,7 @@ async def make_prefs_from(send_obj, opts):
         elif opt == '/keep':       override['delete_original'] = 0
         elif opt == '/no-delete':  override['delete_original'] = 0
         elif opt == '/delete':     override['delete_original'] = 1
+        elif opt == '/delete-all': override['delete_original'] = 2
         else:
             invalid.add(opt)
     if invalid:
@@ -405,6 +407,7 @@ help_description = f"""
     **Options:**
     You specify custom behaviors by putting / options after the `{LISTEN_TO}`. These will override the preferences described below.
     `{LISTEN_TO}/delete` Delete the original messages (ie. move them)
+    `{LISTEN_TO}/delete-all` Also delete messages that couldn't be fully copied.
     `{LISTEN_TO}/keep` Do not delete the original messages (ie. act like CopyBot)
     `{LISTEN_TO}/no-delete` Synonym for `{LISTEN_TO}/keep`
 
@@ -592,10 +595,11 @@ async def on_message(msg_in):
             make_thread_named = await random_thread_name()
         else:
             different_target = False
-        
+
+        delete_original = int(await get_pref(guild_id, "delete_original", override))
         try:
             with MoveBotWebhookLock(msg_in.guild.id, action, msg_in.content):
-                moved, failed, author_map, new_channel = await copy_messages(aborter, before_messages, moved_msg, after_messages, msg_in, target_channel, override, make_thread_named)
+                moved, failed, author_map, new_channel = await copy_messages(aborter, before_messages, moved_msg, after_messages, msg_in, target_channel, override, make_thread_named, delete_original)
         except MoveBotWebhookInUse as exc:
             await send_info(txt_channel, None, "MoveBot is in Use",
                             f"{bot_name} is copying messages in this server right now. You must wait for it to finish before asking it to copy again.\n{exc.description()}")
@@ -604,11 +608,12 @@ async def on_message(msg_in):
         if new_channel:
             dest_channel = f'<#{new_channel.id}>'
 
-        delete_original = int(await get_pref(guild_id, "delete_original", override))
         if moved or failed:
             await notify_users(aborter, msg_in, override, author_map, dest_channel, delete_original, extra_message, source_channel, failed)
             mod_channel = await send_to_mod_channel(mod_channel, msg_in, moved, failed, dest_channel, delete_original, source_channel)
-        if delete_original:
+        if delete_original == 2:
+            await delete_messages(aborter, txt_channel, moved + failed + [msg_in])
+        elif delete_original == 1:
             await delete_messages(aborter, txt_channel, moved + [msg_in])
         else:
             await delete_messages(aborter, msg_in.channel, [msg_in])
@@ -758,7 +763,7 @@ async def find_target_channel(msg_in, dest_channel, mod_channel):
 
         return target_channel
 
-async def copy_messages(aborter, before_messages, moved_msg, after_messages, msg_in, target_channel, override, make_thread_named: str):
+async def copy_messages(aborter, before_messages, moved_msg, after_messages, msg_in, target_channel, override, make_thread_named: str, delete_original):
         webhook_name = f'MoveBot {BOT_ID}'
         guild_id = msg_in.guild.id
         wb = None
@@ -820,19 +825,27 @@ async def copy_messages(aborter, before_messages, moved_msg, after_messages, msg
             elif isinstance(target_channel, Thread):
                 kwargs['thread'] = target_channel
 
-            try:
-                sm = await(wb.send(**kwargs))
-                moved.append(msg)
-            except discord.DiscordException as he:
-                description = msg.content or msg.system_content or '*(empty message)*'
-                kwargs['content'] = f'{bot_name} could not copy message {msg.jump_url} to this channel.\n'
-                kwargs['embeds'] = [ discord.Embed(title=f"Message Contents", description=description) ]
-                del kwargs['files']
-                sm = await(wb.send(**kwargs))
-                failed.append(msg)
-                if len(failed)>=MAX_FAILED_COPIES:
+            fail_counter = 0
+            for retry in range(2):
+                if retry == 1:
+                    failed.append(msg)
+                    if delete_original > 1:
+                        kwargs['content'] = f'{bot_name} could not copy this message, so it only copied the text.\n'
+                    else:
+                        kwargs['content'] = f'{bot_name} could not copy message {msg.jump_url} to this channel.\n'
+                    kwargs['embeds'] = [ discord.Embed(title=f"Message Contents", description=msg_content) ]
+                    del kwargs['files']
+                    fail_counter += 1
+                try:
+                    sm = await(wb.send(**kwargs))
+                    if not retry:
+                        moved.append(msg)
+                    break
+                except discord.DiscordException as he:
+                    pass
+                if MAX_FAILED_COPIES>0 and len(failed)>=MAX_FAILED_COPIES:
                     send_info(msg_in.channel, None, "Too many failed copies",
-                              f'Gave up copying messages after {MAX_FAILED} failed to copy.')
+                              f'Gave up copying messages after {MAX_FAILED} failed copy attempts.')
                     break
 
             if make_thread and sm.channel:
@@ -887,8 +900,11 @@ async def notify_users(aborter, msg_in, override, author_map, dest_channel, dele
                     .replace("CC_OPERATION", 'Moved' if delete_original else 'Copied')
                 description = f'{description}{extra_message}'
                 if failed:
-                    description += f"\n\nThese messages were linked instead of copied because MoveBot couldn't move them: "
-                    description += ', '.join([ m.jump_url for m in failed ])
+                    if delete_original>1:
+                        description += f"\n\nMoveBot couldn't copy {len(failed)} message{'s' if len(failed)>1 else ''}, so it only copied the text."
+                    else:
+                        description += f"\n\nThese messages were linked instead of copied because MoveBot couldn't move them: "
+                        description += ', '.join([ m.jump_url for m in failed ])
                 embed = int(await get_pref(guild_id, "embed_message", override))
                 try:
                     if embed == 1:
