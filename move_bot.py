@@ -21,6 +21,7 @@ import datetime
 import random
 import asyncio
 import copy
+import collections
 from contextlib import closing
 from discord import Thread
 from discord.ext import commands # this upgrades from `client` to `bot` (per Rapptz's recommendation)
@@ -32,6 +33,7 @@ load_dotenv()
 LOG_PATH = os.getenv('LOG_PATH')
 
 logger = logging.getLogger('discord')
+trace = logging.getLogger('discord.trace')
 logger.setLevel(logging.DEBUG)
 handler = logging.FileHandler(filename=LOG_PATH, encoding='UTF-8', mode='w')
 handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
@@ -57,38 +59,39 @@ MAX_SPECIAL_MESSAGES = 20 # Number of messages that may be generated, in additio
 if LISTEN_TO.rstrip() == LISTEN_TO:
     LISTEN_TO += " "
 
+# For generating thread names when moving messages to a forum.
 some_words = [
-"aero", "alizarin", "almond", "amazon", "amber", "amethyst", "apricot", "aqua",
-"aquamarine", "aureolin", "azure", "beaver", "beige", "bisque", "bistre",
-"black", "blue", "blue-violet", "bluetiful", "blush", "bole", "bone", "bronze",
-"brown", "buff", "burgundy", "burlywood", "byzantine", "byzantium", "camel",
-"canary", "cardinal", "carmine", "carnelian", "catawba", "celadon", "celeste",
-"cerise", "cerulean", "champagne", "charcoal", "chestnut", "cinereous",
-"cinnabar", "citrine", "citron", "claret", "coffee", "copper", "coquelicot",
-"coral", "cordovan", "corn", "cornsilk", "cream", "crimson", "cyan",
-"cyclamen", "dandelion", "denim", "desert", "ebony", "ecru", "eggplant",
-"eggshell", "emerald", "eminence", "erin", "fallow", "fandango", "fawn",
-"finn", "firebrick", "flame", "flax", "flirt", "frostbite", "fuchsia",
-"fulvous", "gainsboro", "gamboge", "glaucous", "goldenrod", "green",
-"green-blue", "gunmetal", "harlequin", "heliotrope", "iceberg", "inchworm",
-"independence", "indigo", "irresistible", "isabelline", "ivory", "jasmine",
-"jet", "jonquil", "keppel", "kobe", "kobi", "kobicha", "lava", "lemon",
-"nickel", "nyanza", "ochre", "olive", "olivine", "onyx", "opal", "orange",
-"orange-red", "orange-yellow", "orchid", "oxblood", "parchment", "patriarch",
-"paua", "peach", "pear", "periwinkle", "persimmon", "phlox", "pink",
-"pistachio", "platinum", "plum", "popstar", "prune", "puce", "pumpkin",
-"purple", "purpureus", "rajah", "raspberry", "razzmatazz", "red", "red-orange",
-"red-purple", "red-violet", "redwood", "rhythm", "rose", "rosewood", "ruber",
-"ruby", "rufous", "russet", "rust", "saffron", "sage", "salmon", "sand",
-"sapphire", "scarlet", "seance", "seashell", "secret", "sepia", "shadow",
-"sienna", "silver", "sinopia", "skobeloff", "smitten", "snow", "straw",
-"strawberry", "sunglow", "sunray", "sunset", "tan", "tangerine", "taupe",
-"teal", "technobotanica", "telemagenta", "thistle", "timberwolf", "tomato",
-"tourmaline", "tumbleweed", "turquoise", "tuscan", "tuscany", "ultramarine",
-"umber", "vanilla", "verdigris", "vermilion", "vermilion", "veronica",
-"violet", "violet-blue", "violet-red", "viridian", "volt", "wheat", "white",
-"wine", "wisteria", "xanadu", "xanthic", "xanthous", "yellow", "yellow-green",
-"zaffre", "zomp"
+"Aero", "Alizarin", "Almond", "Amazon", "Amber", "Amethyst", "Apricot", "Aqua",
+"Aquamarine", "Aureolin", "Azure", "Beaver", "Beige", "Bisque", "Bistre",
+"Black", "Blue", "Blue-Violet", "Bluetiful", "Blush", "Bole", "Bone", "Bronze",
+"Brown", "Buff", "Burgundy", "Burlywood", "Byzantine", "Byzantium", "Camel",
+"Canary", "Cardinal", "Carmine", "Carnelian", "Catawba", "Celadon", "Celeste",
+"Cerise", "Cerulean", "Champagne", "Charcoal", "Chestnut", "Cinereous",
+"Cinnabar", "Citrine", "Citron", "Claret", "Coffee", "Copper", "Coquelicot",
+"Coral", "Cordovan", "Corn", "Cornsilk", "Cream", "Crimson", "Cyan",
+"Cyclamen", "Dandelion", "Denim", "Desert", "Ebony", "Ecru", "Eggplant",
+"Eggshell", "Emerald", "Eminence", "Erin", "Fallow", "Fandango", "Fawn",
+"Finn", "Firebrick", "Flame", "Flax", "Flirt", "Frostbite", "Fuchsia",
+"Fulvous", "Gainsboro", "Gamboge", "Glaucous", "Goldenrod", "Green",
+"Green-Blue", "Gunmetal", "Harlequin", "Heliotrope", "Iceberg", "Inchworm",
+"Independence", "Indigo", "Irresistible", "Isabelline", "Ivory", "Jasmine",
+"Jet", "Jonquil", "Keppel", "Kobe", "Kobi", "Kobicha", "Lava", "Lemon",
+"Nickel", "Nyanza", "Ochre", "Olive", "Olivine", "Onyx", "Opal", "Orange",
+"Orange-Red", "Orange-Yellow", "Orchid", "Oxblood", "Parchment", "Patriarch",
+"Paua", "Peach", "Pear", "Periwinkle", "Persimmon", "Phlox", "Pink",
+"Pistachio", "Platinum", "Plum", "Popstar", "Prune", "Puce", "Pumpkin",
+"Purple", "Purpureus", "Rajah", "Raspberry", "Razzmatazz", "Red", "Red-Orange",
+"Red-Purple", "Red-Violet", "Redwood", "Rhythm", "Rose", "Rosewood", "Ruber",
+"Ruby", "Rufous", "Russet", "Rust", "Saffron", "Sage", "Salmon", "Sand",
+"Sapphire", "Scarlet", "Seance", "Seashell", "Secret", "Sepia", "Shadow",
+"Sienna", "Silver", "Sinopia", "Skobeloff", "Smitten", "Snow", "Straw",
+"Strawberry", "Sunglow", "Sunray", "Sunset", "Tan", "Tangerine", "Taupe",
+"Teal", "Technobotanica", "Telemagenta", "Thistle", "Timberwolf", "Tomato",
+"Tourmaline", "Tumbleweed", "Turquoise", "Tuscan", "Tuscany", "Ultramarine",
+"Umber", "Vanilla", "Verdigris", "Vermilion", "Vermilion", "Veronica",
+"Violet", "Violet-Blue", "Violet-Red", "Viridian", "Volt", "Wheat", "White",
+"Wine", "Wisteria", "Xanadu", "Xanthic", "Xanthous", "Yellow", "Yellow-Green",
+"Zaffre", "Zomp"
 ]
 
 available_prefs = {
@@ -180,6 +183,40 @@ async def db_init():
 
 asyncio.run(db_init())
 
+class MoveBotInUse(Exception):
+    def __init__(self,where,operation):
+        self.where = str(where)
+        self.operation = str(operation)
+    def description(self):
+        return f'{self.where} said this:\n\t\t{self.operation}\n'
+
+class MoveBotLock:
+    guilds=dict()
+    def __init__(self,guild_id,where,operation):
+        self.guild_id = guild_id
+        self.where = str(where)
+        self.operation = str(operation)
+    def __enter__(self):
+        where_op = MoveBotLock.guilds.get(self.guild_id,None)
+        if where_op:
+            raise MoveBotInUse(where_op[0], where_op[1])
+        MoveBotLock.guilds[self.guild_id] = [self.where, self.operation]
+    def __exit__(self,a,b,c):
+        del MoveBotLock.guilds[self.guild_id]
+        return None
+
+class Sleeper:
+    def __init__(self,naptime):
+        self.naptime=float(naptime)
+        self.slept=False
+    def has_slept(self):
+        return self.slept
+    def get_naptime(self):
+        return self.naptime
+    async def nap(self):
+        await asyncio.sleep(self.naptime)
+        self.slept=True
+
 async def get_pref(guild_id, pref, override):
     if pref in override:
         return override[pref]
@@ -235,6 +272,10 @@ async def reset_prefs(guild_id):
 async def send_info(send_obj, exception, title, details):
     e = discord.Embed(title = title, description = details)
     if DEBUG_MODE and exception:
+        description = e.description
+        guild = getattr(send_obj,'guild',None)
+        description = f'{guild.name}(#{guild.id}): {e.description}' if guild else e.description
+        trace.warning(description,exc_info=True)
         e.description += "\n" + "Discord error message: " + str(exception)
     await send_obj.send(embed=e)
 
@@ -244,6 +285,7 @@ async def send_mod_log(send_obj, message):
     except Exception as exc:
         await send_info(send_obj, exc, "Moderation log inaccessible",
                    "Unable to log a moderation action.")
+        raise
 
 def split_pair(arg):
     result = arg.split(maxsplit = 1)
@@ -290,6 +332,7 @@ async def make_prefs_from(send_obj, opts):
         invalids = ", ".join(sorted(invalid))
         s = 's' if len(invalid) > 1 else ''
         await send_info(send_obj, None, "Invalid option", f"Ignoring unrecognized option{s}: {invalids}")
+        raise
     return override
 
 pref_help_description = f"""
@@ -353,7 +396,15 @@ if bot.user and bot.user.name:
     bot_name = bot.user.name
 
 async def random_thread_name():
-    return ' '.join([ random.choice(some_words) for x in range(3) ]) + ' ' + bot_name
+    return bot_name + " " + ' '.join([ random.choice(some_words) for x in range(3) ])
+
+def as_channel_id(text: str):
+    if text.startswith('<'):
+        return int(text.strip('<#').strip('>'))
+    elif text.startswith('#'):
+        return int(text.strip('#'))
+    else:
+        return None
 
 @bot.event
 async def on_ready():
@@ -420,7 +471,8 @@ async def on_message(msg_in):
         e.description = help_description
         async with msg_in.author.typing():
             await msg_in.author.send(embed=e)
-            await delete_messages(msg_in, [msg_in], 1)
+            await msg_in.channel.send(f'Sent help to <@!{msg_in.author.id}> in a direct message.')
+            await delete_messages(msg_in.channel, [msg_in])
         return
 
     elif params[1] == "ping":
@@ -442,7 +494,7 @@ async def on_message(msg_in):
         async with msg_in.author.typing():
             await reset_prefs(int(guild_id))
             await txt_channel.send("All preferences reset to default")
-            await delete_messages(msg_in, [msg_in], 1)
+            await delete_messages(msg_in.channel, [msg_in])
         return
 
     # !mv pref [pref_name] [pref_value]
@@ -475,64 +527,107 @@ async def on_message(msg_in):
         e = discord.Embed(title=title, description = response_msg)
         async with send_obj.typing():
             await send_obj.send(embed=e)
-            await delete_messages(msg_in, [msg_in], 1)
+            await delete_messages(msg_in.channel, [msg_in])
         return
 
     # !mv [msgID] [optional multi-move] [#channel] [optional message]
     async with txt_channel.typing():
-        moved_msg = await fetch_moved_message(msg_in, params, is_reply)
+        moved_msg, source_channel = await fetch_moved_message(msg_in, params, is_reply)
         if moved_msg is None:
             return
-
-        ( extra_message, before_messages, after_messages, dest_channel ) = await fetch_other_messages(is_reply, msg_in, params, moved_msg)
+        ( extra_message, before_messages, after_messages, dest_channel ) = await fetch_other_messages(is_reply, msg_in, params, moved_msg, source_channel)
         if extra_message is None:
             return
-
         target_channel = await find_target_channel(msg_in, dest_channel, mod_channel)
-        moved, author_map, new_channel = await copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override, await random_thread_name())
+
+        make_thread_named = None
+        different_target = True
+        if source_channel and not isinstance(target_channel, discord.Thread):
+            make_thread_named = source_channel.name
+        elif isinstance(target_channel, discord.ForumChannel):
+            make_thread_named = await random_thread_name()
+        else:
+            different_target = False
+        
+        try:
+            with MoveBotLock(msg_in.guild.id, f'<@!{msg_in.author.id}> in <#{msg_in.channel.id}> with {msg_in.jump_url}',
+                             msg_in.content):
+                moved, author_map, new_channel = await copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override, make_thread_named)
+        except MoveBotInUse as exc:
+            await send_info(txt_channel, None, "MoveBot is in Use",
+                            f"{bot_name} is copying messages in this server right now. You must wait for it to finish before asking it to copy again.\n{exc.description()}")
+            return
+        
         if new_channel:
             dest_channel = f'<#{new_channel.id}>'
+
         delete_original = int(await get_pref(guild_id, "delete_original", override))
-        await notify_users(msg_in, override, author_map, dest_channel, delete_original, extra_message)
-        mod_channel = await send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_original)
-        await delete_messages(msg_in, before_messages + [moved_msg] + after_messages + [msg_in], delete_original)
+        await notify_users(msg_in, override, author_map, dest_channel, delete_original, extra_message, source_channel)
+        mod_channel = await send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_original, source_channel)
+        if delete_original:
+            await delete_messages(txt_channel, before_messages + [moved_msg] + after_messages)
+        # Always delete the command last:
+        await delete_messages(msg_in.channel, [msg_in])
 
 async def fetch_moved_message(msg_in, params, is_reply):
         txt_channel = msg_in.channel
         try:
-            return await txt_channel.fetch_message(msg_in.reference.message_id if is_reply else params[1])
+            #return await txt_channel.fetch_message(msg_in.reference.message_id if is_reply else params[1])
+            if is_reply:
+                return await txt_channel.fetch_message(msg_in.reference.message_id), None
+            try:
+                source_channel_id = as_channel_id(params[1])
+                source_channel = msg_in.guild.get_channel_or_thread(source_channel_id)
+                if not source_channel:
+                    return await txt_channel.fetch_message(int(params[1])), None
+                elif source_channel and not isinstance(source_channel, discord.Thread):
+                    await send_info(txt_channel, None, f"Cannot move <#{source_channel.id}>",
+                                    f"{bot_name} can only move threads and messages.\nTry `{LISTEN_TO}help`")
+                    return None, None
+            except (TypeError, ValueError, AttributeError) as exc:
+                await send_info(txt_channel, exc, f"What is that?",
+                                f"{bot_name} can only move threads and messages. Don't know what to do with {params[1]}\nTry `{LISTEN_TO}help`")
+                return None, None
+            if source_channel:
+                async for first in source_channel.history():
+                    return first, source_channel
+            return await txt_channel.fetch_message(params[1]), None
         except Exception as exc:
             await send_info(txt_channel, exc, "Cannot find message",
                               "You can ignore the message ID by executing the **move** command as a reply to the target message.")
-            return None
+            return None,None
 
-async def fetch_other_messages(is_reply, msg_in, params, moved_msg):
+async def fetch_other_messages(is_reply, msg_in, params, moved_msg, source_channel):
         txt_channel = msg_in.channel
         channel_param = 1 if is_reply else 2
         before_messages = []
         after_messages = []
-        if params[channel_param].startswith(('+', '-', '~')):
+        sleeper = Sleeper(FETCH_SLEEP_TIME)
+        if source_channel:
+            count = 0
+            async for msg in source_channel.history(before=moved_msg):
+                await sleeper.nap()
+                count += 1
+                if count > MAX_MESSAGES:
+                    await send_info(txt_channel, None, f'Thread is too large. Maximum allowed messages is {MAX_MESSAGES}.')
+                    break
+                before_messages.append(msg)
+            dest_channel = params[channel_param]
+            extra_message = f'\n\n{params[channel_param + 1]}' if len(params) > channel_param + 1 else ''
+        elif params[channel_param].startswith(('+', '-', '~')):
             value = int(params[channel_param][1:])
             if params[channel_param][0] in '+-' and value > MAX_MESSAGES-1:
                 await send_info(txt_channel, None, f'Maximum allowed messages is {MAX_MESSAGES}.')
 
             if params[channel_param][0] == '-':
-                first = True
                 async for msg in txt_channel.history(limit=value, before=moved_msg):
-                    if not first:
-                        await asyncio.sleep(FETCH_SLEEP_TIME)
-                    first = False
+                    await sleeper.nap()
                     before_messages.append(msg)
-                before_messages.reverse()
             elif params[channel_param][0] == '+':
-                first = True
                 async for msg in txt_channel.history(limit=value, after=moved_msg):
-                    if not first:
-                        await asyncio.sleep(FETCH_SLEEP_TIME)
-                    first = False
+                    await sleeper.nap()
                     after_messages.append(msg)
             else:
-                logger.info('scan a message range')
                 try:
                     await txt_channel.fetch_message(value)
                 except Exception as exc:
@@ -541,11 +636,8 @@ async def fetch_other_messages(is_reply, msg_in, params, moved_msg):
                     return ( None, None, None, None )
 
                 found = False
-                first = True
                 async for msg in txt_channel.history(limit=MAX_MESSAGES-1, after=moved_msg):
-                    if not first:
-                        await asyncio.sleep(FETCH_SLEEP_TIME)
-                    first = False
+                    await sleeper.nap()
                     after_messages.append(msg)
                     found = msg.id == value
                     if found:
@@ -564,8 +656,8 @@ async def fetch_other_messages(is_reply, msg_in, params, moved_msg):
             dest_channel = params[channel_param]
             extra_message = f'\n\n{params[channel_param + 1]}' if len(params) > channel_param + 1 else ''
         if len(dest_channel) > 1 and dest_channel[0] != '<' and dest_channel[1] in '0123456789':
-            logger.info('adding <> to dest_channel '+ dest_channel)
             dest_channel = '<'+dest_channel+'>'
+        before_messages.reverse()
         return ( extra_message, before_messages, after_messages, dest_channel )
 
 async def find_target_channel(msg_in, dest_channel, mod_channel):
@@ -587,9 +679,8 @@ async def find_target_channel(msg_in, dest_channel, mod_channel):
 
         return target_channel
 
-async def copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override, new_thread_name: str):
+async def copy_messages(before_messages, moved_msg, after_messages, msg_in, target_channel, override, make_thread_named: str):
         webhook_name = f'MoveBot {BOT_ID}'
-        logger.info("Find webhook "+webhook_name)
         guild_id = msg_in.guild.id
         wb = None
         wbhks = await msg_in.guild.webhooks()
@@ -599,12 +690,10 @@ async def copy_messages(before_messages, moved_msg, after_messages, msg_in, targ
 
         parent_channel = target_channel.parent if isinstance(target_channel, Thread) else target_channel
         if wb is None:
-            logger.info("Create webhook "+webhook_name)
             wb = await parent_channel.create_webhook(name=webhook_name, reason='Required webhook for MoveBot to function.')
         else:
             if wb.channel != parent_channel:
                 await wb.edit(channel=parent_channel)
-        is_forum = target_channel.type == discord.ChannelType.forum
 
         new_thread = None
 
@@ -612,24 +701,23 @@ async def copy_messages(before_messages, moved_msg, after_messages, msg_in, targ
         strip_ping = int(await get_pref(guild_id, "strip_ping", override))
         moved = 0
         guild = None
-        first = True
+        send_sleeper = Sleeper(SEND_SLEEP_TIME)
         for msg in before_messages + [moved_msg] + after_messages:
-            if not first:
-                await asyncio.sleep(SEND_SLEEP_TIME)
-            make_thread = is_forum and first
-            first = False
+            make_thread = not send_sleeper.has_slept() and make_thread_named
+            await send_sleeper.nap()
             if guild is None:
                 guild = msg.guild
-            msg_content = msg.content.replace('@', '@\u200b') if strip_ping == 1 and '@' in msg.content else msg.content
-            if not msg_content:
-                msg_content = '*(empty message)*'
+
+            msg_content = msg.content or msg.system_content or '*(empty message)*'
+            if strip_ping == 1 and '@' in msg.content:
+                msg_content = msg_content.replace('@', '@\u200b')
+
             files = []
             for file in msg.attachments:
-                f = io.BytesIO()
-                await file.save(f)
-                files.append(discord.File(f, filename=file.filename))
-
-            from_id = msg.id
+                files.append(await file.to_file(filename=file.filename, spoiler=file.is_spoiler(), description=file.description if file.description else None))
+                # f = io.BytesIO()
+                # await file.save(f)
+                # files.append(discord.File(f, filename=file.filename, spoiler=file.is_spoiler(), description=file.description if file.description else None))
 
             kwargs = {
                 'content':msg_content,
@@ -641,15 +729,19 @@ async def copy_messages(before_messages, moved_msg, after_messages, msg_in, targ
             }
 
             if make_thread:
-                kwargs['thread_name'] = new_thread_name
-            elif is_forum:
+                if isinstance(target_channel, discord.TextChannel) and not target_channel.type==discord.ChannelType.forum:
+                    new_thread = await target_channel.create_thread(name=make_thread_named, reason='MoveBot command', type=discord.ChannelType.public_thread)
+                    kwargs['thread'] = new_thread
+                else:
+                    kwargs['thread_name'] = str(make_thread_named)
+            elif new_thread:
                 kwargs['thread'] = new_thread
             elif isinstance(target_channel, Thread):
                 kwargs['thread'] = target_channel
 
             sm = await(wb.send(**kwargs))
 
-            if make_thread:
+            if make_thread and sm.channel:
                 new_thread = sm.channel
 
             if msg.author.id not in author_map:
@@ -658,11 +750,11 @@ async def copy_messages(before_messages, moved_msg, after_messages, msg_in, targ
             moved = moved + 1
         return ( moved, author_map, new_thread )
 
-async def send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_original):
+async def send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_original, source_channel):
         if not mod_channel:
             mod_channel = discord.utils.get(msg_in.guild.channels, name="mod-log")
         if mod_channel:
-            txt_channel = msg_in.channel
+            txt_channel = source_channel if source_channel else msg_in.channel
             description = "CC_OPERATION MESSAGE_COUNT messages from SOURCE_CHANNEL to DESTINATION_CHANNEL, ordered by MOVER_USER."
             description = description.replace("MESSAGE_COUNT", str(moved)) \
                                      .replace("SOURCE_CHANNEL", f"<#{txt_channel.id}>") \
@@ -673,18 +765,16 @@ async def send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_o
             await send_mod_log(mod_channel, description)
         return mod_channel
 
-async def notify_users(msg_in, override, author_map, dest_channel, delete_original, extra_message):
-        txt_channel = msg_in.channel
+async def notify_users(msg_in, override, author_map, dest_channel, delete_original, extra_message, source_channel):
         guild_id = msg_in.guild.id
-        notify_dm = await get_pref(guild_id, "notify_dm", override)
-        notify_dm = int(notify_dm)
+        notify_dm = int(await get_pref(guild_id, "notify_dm", override))
         authors = [author_map[a] for a in author_map]
         author_ids = [f"<@!{a.id}>" for a in authors]
         send_objs = []
         if notify_dm == 1:
             send_objs = authors
         elif notify_dm != 2:
-            send_objs = [txt_channel]
+            send_objs = [source_channel if source_channel else msg_in.channel]
         if notify_dm != 2:
             for send_obj in send_objs:
                 if notify_dm == 1:
@@ -711,65 +801,54 @@ async def notify_users(msg_in, override, author_map, dest_channel, delete_origin
                     elif description:
                         await send_obj.send(description)
                 except (discord.NotFound, commands.errors.MessageNotFound) as exc:
-                    pass # Probably trying to DM a MoveBot-generated message
+                    to = f'`{send_boj.id}`' if notify_dm == 1 else f'<#{send_obj.id}>'
+                    await send_info(msg_in.channel, exc, "Cannot send message",
+                                    f'Unable to send notification message to {to}')
 
-def without_duplicates(messages):
-    used = set()
-    nodup = []
-    for msg in messages:
-        if msg.id not in used:
-            used.add(msg.id)
-            nodup.append(msg)
-    return nodup
-
-async def delete_messages(msg_in, messages, delete_original):
-        txt_channel = msg_in.channel
-
+async def delete_messages(log_channel, messages):
         # Split messages into blocks of MAX_DELETE or less for bulk deletion.
-        bulk_delete = []
+        bulk_delete = {}
 
         # Messages too old cannot be bulk deleted. We'll delete them one by one instead.
         one_by_one = []
 
-        if delete_original:
-            for msg in without_duplicates(messages):
-                age = (datetime.datetime.now(datetime.timezone.utc) - msg.created_at).total_seconds()
-                if age > BULK_DELETE_MAX_AGE:
-                    one_by_one.append(msg)
-                else:
-                    if not bulk_delete or len(bulk_delete[-1]) > MAX_DELETE:
-                        bulk_delete.append([])
-                    bulk_delete[-1].append(msg)
-            # Special case: only one message. Don't use a bulk deletion:
-            if len(bulk_delete) == 1 and len(bulk_delete[0]) == 1:
-                one_by_one.append(bulk_delete[0][0])
-                bulk_delete = []
-        else:
-            one_by_one = [ msg_in ]
+        # Detect and discard duplicates:
+        seen = set()
+
+        for msg in without_duplicates(messages):
+            if not msg or not msg.channel or msg.id in seen:
+                continue
+            seen.add(msg.id)
+            age = (datetime.datetime.now(datetime.timezone.utc) - msg.created_at).total_seconds()
+            if age > BULK_DELETE_MAX_AGE:
+                one_by_one.append(msg)
+            else:
+                channel_bulk_delete = bulk_delete.setdefault(msg.channel, [[]])
+                if len(channel_bulk_delete[-1]) >= MAX_DELETE:
+                    channel_bulk_delete.append([])
+                channel_bulk_delete[-1].append(msg)
 
         # Delete messages if desired.
-        first = True
         try:
-            first = True
-            for delete_list in bulk_delete:
-                if not first:
-                    await asyncio.sleep(DELETE_SLEEP_TIME)
-                first = False
-                await txt_channel.delete_messages(delete_list)
+            delete_sleeper = Sleeper(DELETE_SLEEP_TIME)
+            for channel,channel_bulk_delete in bulk_delete.items():
+                for batch in channel_bulk_delete:
+                        await delete_sleeper.nap()
+                        await channel.delete_messages(batch)
             for msg in one_by_one:
-                if not first:
-                    await asyncio.sleep(DELETE_SLEEP_TIME)
-                first = False
+                await delete_sleeper.nap()
                 await msg.delete()
+            return True
         except (discord.NotFound, commands.errors.MessageNotFound) as exc:
-            await send_info(txt_channel, exc, "Unknown Message",
+            await send_info(log_channel, exc, "Deletion failed: unknown message",
+                             "Some messages may not have been deleted. "
                              "The bot attempted to delete a message, but could not find it. "
                              "Did someone already delete it? "
                              + f"Was it a part of a `{LISTEN_TO}+/-**x** #\channel` command?")
         except Exception as exc:
-            await send_info(txt_channel, exc, "Deletion failed.",
+            await send_info(log_channel, exc, "Deletion failed.",
                              "Some messages may not have been deleted. "
                              + "Please check the permissions (just apply **Admin** to the bot or its role for EasyMode)")
-            raise
+        return False
 #end
 bot.run(TOKEN)
