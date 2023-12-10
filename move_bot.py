@@ -267,7 +267,6 @@ async def get_pref(guild_id, pref, override):
 async def update_pref(guild_id, pref, value): #This needs to be it's own function so that it can be `async`
     if guild_id not in prefs:
         prefs[guild_id] = copy.deepcopy(available_prefs)
-        prefs[guild_id][pref] = value
         async with asqlite.connect(DB_PATH) as connection:
             async with connection.cursor() as cursor:
                 await cursor.execute(f"INSERT OR IGNORE INTO prefs VALUES (?, ?, ?, ?, ?, ?)", (int(guild_id),prefs[guild_id]["notify_dm"], prefs[guild_id]["embed_message"], prefs[guild_id
@@ -281,6 +280,7 @@ async def update_pref(guild_id, pref, value): #This needs to be it's own functio
                 await cursor.execute(sql)
                 await cursor.close()
                 await connection.commit()
+    prefs[guild_id][pref] = value
 
 async def update_move_msg_pref(guild_id, moved_message):
     mm = ""
