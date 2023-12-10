@@ -46,6 +46,7 @@ LISTEN_TO = os.getenv('LISTEN_TO')
 ADMIN_ID = os.getenv('ADMIN_UID')
 BOT_ID = os.getenv('MOVEBOT_ID')
 DB_PATH = os.getenv('DB_PATH')
+MAX_FAILED_COPIES = int(os.getenv('MAX_FAILED_COPIES', '10'), 10)
 MAX_MESSAGES = int(os.getenv('MAX_MESSAGES', '100'))
 DEBUG_MODE = os.getenv('DEBUG_MODE', '1')
 BULK_DELETE_MAX_AGE = 24*3600*float(os.getenv('BULK_DELETE_MAX_AGE', '13.9'))
@@ -594,7 +595,7 @@ async def on_message(msg_in):
         
         try:
             with MoveBotWebhookLock(msg_in.guild.id, action, msg_in.content):
-                moved, author_map, new_channel = await copy_messages(aborter, before_messages, moved_msg, after_messages, msg_in, target_channel, override, make_thread_named)
+                moved, failed, author_map, new_channel = await copy_messages(aborter, before_messages, moved_msg, after_messages, msg_in, target_channel, override, make_thread_named)
         except MoveBotWebhookInUse as exc:
             await send_info(txt_channel, None, "MoveBot is in Use",
                             f"{bot_name} is copying messages in this server right now. You must wait for it to finish before asking it to copy again.\n{exc.description()}")
@@ -604,10 +605,11 @@ async def on_message(msg_in):
             dest_channel = f'<#{new_channel.id}>'
 
         delete_original = int(await get_pref(guild_id, "delete_original", override))
-        await notify_users(aborter, msg_in, override, author_map, dest_channel, delete_original, extra_message, source_channel)
-        mod_channel = await send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_original, source_channel)
+        if moved or failed:
+            await notify_users(aborter, msg_in, override, author_map, dest_channel, delete_original, extra_message, source_channel, failed)
+            mod_channel = await send_to_mod_channel(mod_channel, msg_in, moved, failed, dest_channel, delete_original, source_channel)
         if delete_original:
-            await delete_messages(aborter, txt_channel, before_messages + [moved_msg] + after_messages + [msg_in])
+            await delete_messages(aborter, txt_channel, moved + [msg_in])
         else:
             await delete_messages(aborter, msg_in.channel, [msg_in])
 
@@ -776,12 +778,13 @@ async def copy_messages(aborter, before_messages, moved_msg, after_messages, msg
 
         author_map = {}
         strip_ping = int(await get_pref(guild_id, "strip_ping", override))
-        moved = 0
+        moved = []
+        failed = []
         guild = None
+        make_thread = not not make_thread_named
         send_sleeper = Sleeper(SEND_SLEEP_TIME)
         for msg in before_messages + [moved_msg] + after_messages:
             aborter.checkpoint()
-            make_thread = not send_sleeper.has_slept() and make_thread_named
             await send_sleeper.nap()
             if guild is None:
                 guild = msg.guild
@@ -817,24 +820,34 @@ async def copy_messages(aborter, before_messages, moved_msg, after_messages, msg
             elif isinstance(target_channel, Thread):
                 kwargs['thread'] = target_channel
 
-            sm = await(wb.send(**kwargs))
+            try:
+                sm = await(wb.send(**kwargs))
+                moved.append(msg)
+            except discord.DiscordException as he:
+                description = msg.content or msg.system_content or '*(empty message)*'
+                e = discord.Embed(title=f"Message Contents", description=description)
+                sm = await(wb.send(f'{bot_name} could not copy message {msg.jump_url} to this channel.\n', embed=e))
+                failed.append(msg)
+                if len(failed)>=MAX_FAILED_COPIES:
+                    send_info(msg_in.channel, None, "Too many failed copies",
+                              f'Gave up copying messages after {MAX_FAILED} failed to copy.')
+                    break
 
             if make_thread and sm.channel:
                 new_thread = sm.channel
+                make_thread = False
 
             if msg.author.id not in author_map:
                 author_map[msg.author.id] = msg.author
+        return ( moved, failed, author_map, new_thread )
 
-            moved = moved + 1
-        return ( moved, author_map, new_thread )
-
-async def send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_original, source_channel):
+async def send_to_mod_channel(mod_channel, msg_in, moved, failed, dest_channel, delete_original, source_channel):
         if not mod_channel:
             mod_channel = discord.utils.get(msg_in.guild.channels, name="mod-log")
         if mod_channel:
             txt_channel = source_channel if source_channel else msg_in.channel
             description = "CC_OPERATION MESSAGE_COUNT messages from SOURCE_CHANNEL to DESTINATION_CHANNEL, ordered by MOVER_USER."
-            description = description.replace("MESSAGE_COUNT", str(moved)) \
+            description = description.replace("MESSAGE_COUNT", str(len(moved) + len(failed))) \
                                      .replace("SOURCE_CHANNEL", f"<#{txt_channel.id}>") \
                                      .replace("DESTINATION_CHANNEL", dest_channel) \
                                      .replace("MOVER_USER", f"`{msg_in.author.name}`") \
@@ -843,7 +856,7 @@ async def send_to_mod_channel(mod_channel, msg_in, moved, dest_channel, delete_o
             await send_mod_log(mod_channel, description)
         return mod_channel
 
-async def notify_users(aborter, msg_in, override, author_map, dest_channel, delete_original, extra_message, source_channel):
+async def notify_users(aborter, msg_in, override, author_map, dest_channel, delete_original, extra_message, source_channel, failed):
         guild_id = msg_in.guild.id
         notify_dm = int(await get_pref(guild_id, "notify_dm", override))
         authors = [author_map[a] for a in author_map]
@@ -871,6 +884,9 @@ async def notify_users(aborter, msg_in, override, author_map, dest_channel, dele
                     .replace("LC_OPERATION", 'moved' if delete_original else 'copied') \
                     .replace("CC_OPERATION", 'Moved' if delete_original else 'Copied')
                 description = f'{description}{extra_message}'
+                if failed:
+                    description += f"\n\nThese messages were linked instead of copied because MoveBot couldn't move them: "
+                    description += ', '.join([ m.jump_url for m in failed ])
                 embed = int(await get_pref(guild_id, "embed_message", override))
                 try:
                     if embed == 1:
