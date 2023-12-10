@@ -825,8 +825,10 @@ async def copy_messages(aborter, before_messages, moved_msg, after_messages, msg
                 moved.append(msg)
             except discord.DiscordException as he:
                 description = msg.content or msg.system_content or '*(empty message)*'
-                e = discord.Embed(title=f"Message Contents", description=description)
-                sm = await(wb.send(f'{bot_name} could not copy message {msg.jump_url} to this channel.\n', embed=e))
+                kwargs['content'] = f'{bot_name} could not copy message {msg.jump_url} to this channel.\n'
+                kwargs['embeds'] = [ discord.Embed(title=f"Message Contents", description=description) ]
+                del kwargs['files']
+                sm = await(wb.send(**kwargs))
                 failed.append(msg)
                 if len(failed)>=MAX_FAILED_COPIES:
                     send_info(msg_in.channel, None, "Too many failed copies",
