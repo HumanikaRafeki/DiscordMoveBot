@@ -480,8 +480,9 @@ async def on_message(msg_in):
     if msg_in.author == bot.user or msg_in.author.bot:
         return
     if not txt_channel.permissions_for(msg_in.author).manage_messages:
-        send_channel = mod_channel if mod_channel else txt_channel
+        send_channel = mod_channel if mod_channel else msg_in.channel
         await send_channel.send(f"Ignoring command from user <@!{msg_in.author.id}> because they don't have manage_messages permissions on origin channel <#{txt_channel.id}>.")
+        await msg_in.add_reaction("🚫")
         return
 
     guild_id = msg_in.guild.id
@@ -495,13 +496,13 @@ async def on_message(msg_in):
         e.description = help_description
         async with msg_in.author.typing():
             await msg_in.author.send(embed=e)
-            await msg_in.channel.send(f'Sent help to <@!{msg_in.author.id}> in a direct message.')
-            await delete_messages(None, msg_in.channel, [msg_in])
+            await msg_in.add_reaction("👍")
         return
 
     elif params[1] == 'abort':
+        await msg_in.add_reaction("⏳")
         await abort_movebot(msg_in)
-        delete_messages(None, msg_in.channel, [msg_in])
+        await msg_in.add_reaction("👍")
         return
 
     elif params[1] == "ping":
@@ -510,6 +511,7 @@ async def on_message(msg_in):
         ms = latency*1000.0
         e = discord.Embed(title="Pong", description=f"Heartbeat: {bpm} BPM ({ms:.1f}ms).")
         await txt_channel.send(embed=e)
+        await msg_in.add_reaction("🏓")
         return
 
     # !mv reset
@@ -517,13 +519,14 @@ async def on_message(msg_in):
         if not msg_in.author.guild_permissions.administrator:
             send_channel = mod_channel if mod_channel else txt_channel
             await send_channel.send(f"Refusing request from <@!{msg_in.author.id}> to reset preferences because they're not an administrator.")
+            await msg_in.add_reaction("🚫")
             return
         if guild_id in prefs:
             prefs.pop(guild_id)
         async with msg_in.author.typing():
             await reset_prefs(int(guild_id))
             await txt_channel.send("All preferences reset to default")
-            await delete_messages(None, msg_in.channel, [msg_in])
+            await msg_in.add_reaction("👍")
         return
 
     # !mv pref [pref_name] [pref_value]
@@ -536,6 +539,7 @@ async def on_message(msg_in):
         elif not msg_in.author.guild_permissions.administrator:
             send_channel = mod_channel if mod_channel else txt_channel
             await send_channel.send(f"Refusing request from <@!{msg_in.author.id}> to change preferences because they're not an administrator.")
+            await msg_in.add_reaction("🚫")
             return
         elif len(params) > 2 and params[2] not in available_prefs:
             title = "Invalid Preference"
@@ -558,12 +562,13 @@ async def on_message(msg_in):
         e = discord.Embed(title=title, description = response_msg)
         async with send_obj.typing():
             await send_obj.send(embed=e)
-            await delete_messages(None, msg_in.channel, [msg_in])
+            await msg_in.add_reaction("👍")
         return
 
     # !mv [msgID] [optional multi-move] [#channel] [optional message]
     action = f'<@!{msg_in.author.id}> in <#{msg_in.channel.id}> with {msg_in.jump_url}'
     aborter = MoveBotAborter(msg_in.channel, guild_id, action, msg_in.content)
+    await msg_in.add_reaction("⏳")
     async with txt_channel.typing(), aborter:
         assert(aborter)
         moved_msg, source_channel = await fetch_moved_message(msg_in, params, is_reply)
@@ -573,6 +578,8 @@ async def on_message(msg_in):
         if extra_message is None:
             return
         target_channel = await find_target_channel(msg_in, dest_channel, mod_channel)
+        if target_channel is None:
+            return
 
         make_thread_named = None
         different_target = True
@@ -583,6 +590,7 @@ async def on_message(msg_in):
         else:
             different_target = False
 
+        await msg_in.add_reaction("👥")
         delete_original = int(await get_pref(guild_id, "delete_original", override))
         try:
             with MoveBotWebhookLock(msg_in.guild.id, action, msg_in.content):
@@ -596,8 +604,10 @@ async def on_message(msg_in):
             dest_channel = f'<#{new_channel.id}>'
 
         if moved or failed:
+            await msg_in.add_reaction("📪")
             await notify_users(aborter, msg_in, override, author_map, dest_channel, delete_original, extra_message, source_channel, failed)
             mod_channel = await send_to_mod_channel(mod_channel, msg_in, moved, failed, dest_channel, delete_original, source_channel)
+        await msg_in.add_reaction("🗑")
         if delete_original == 2:
             await delete_messages(aborter, txt_channel, moved + failed + [msg_in])
         elif delete_original == 1:
@@ -674,6 +684,7 @@ async def fetch_other_messages(aborter, is_reply, msg_in, params, moved_msg, sou
             if not source_channel.permissions_for(msg_in.author).manage_messages:
                 send_channel = mod_channel if mod_channel else txt_channel
                 await send_channel.send(f"Ignoring command from user <@!{msg_in.author.id}> because they don't have manage_messages permissions on origin channel <#{source_channel.id}>.")
+                await msg_in.add_reaction("🚫")
                 return ( None, None, None, None )
             count = 0
             async for msg in source_channel.history(before=moved_msg):
@@ -743,13 +754,15 @@ async def find_target_channel(msg_in, dest_channel, mod_channel):
             return None
 
         if not target_channel.permissions_for(msg_in.author).manage_messages:
-            send_channel = mod_channel if mod_channel else txt_channel
+            send_channel = mod_channel if mod_channel else msg_in.channel
             await send_mod_log(send_channel, f"Ignoring command from user <@!{msg_in.author.id}> because they don't have manage_messages permissions on destination channel <#{target_channel.id}>.")
+            await msg_in.add_reaction("🚫")
             return None
 
         if target_channel.type == discord.ChannelType.forum and not target_channel.permissions_for(msg_in.author).create_public_threads:
-            send_channel = mod_channel if mod_channel else txt_channel
+            send_channel = mod_channel if mod_channel else msg_in.channel
             await send_mod_log(send_channel, f"Ignoring command from user <@!{msg_in.author.id}> because they don't have create_public_threads permissions on destination forum <#{target_channel.id}>.")
+            await msg_in.add_reaction("🚫")
             return None
 
         return target_channel
