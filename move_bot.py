@@ -569,7 +569,7 @@ async def on_message(msg_in):
         moved_msg, source_channel = await fetch_moved_message(msg_in, params, is_reply)
         if moved_msg is None:
             return
-        ( extra_message, before_messages, after_messages, dest_channel ) = await fetch_other_messages(aborter, is_reply, msg_in, params, moved_msg, source_channel)
+        ( extra_message, before_messages, after_messages, dest_channel ) = await fetch_other_messages(aborter, is_reply, msg_in, params, moved_msg, source_channel, mod_channel)
         if extra_message is None:
             return
         target_channel = await find_target_channel(msg_in, dest_channel, mod_channel)
@@ -664,13 +664,17 @@ async def fetch_moved_message(msg_in, params, is_reply):
                               "You can ignore the message ID by executing the **move** command as a reply to the target message.")
             return None,None
 
-async def fetch_other_messages(aborter, is_reply, msg_in, params, moved_msg, source_channel):
+async def fetch_other_messages(aborter, is_reply, msg_in, params, moved_msg, source_channel, mod_channel):
         txt_channel = msg_in.channel
         channel_param = 1 if is_reply else 2
         before_messages = []
         after_messages = []
         sleeper = Sleeper(FETCH_SLEEP_TIME)
         if source_channel:
+            if not source_channel.permissions_for(msg_in.author).manage_messages:
+                send_channel = mod_channel if mod_channel else txt_channel
+                await send_channel.send(f"Ignoring command from user <@!{msg_in.author.id}> because they don't have manage_messages permissions on origin channel <#{source_channel.id}>.")
+                return ( None, None, None, None )
             count = 0
             async for msg in source_channel.history(before=moved_msg):
                 aborter.checkpoint()
