@@ -367,7 +367,7 @@ for k, v in pref_help.items():
 
 help_description = f"""
     This bot can move messages in two different ways.
-    *Moving messages requires to have the 'Manage messages' permission in the source and destination channels.*
+    *Moving messages requires the 'Manage messages' permission in both source and destination channels. Moving threads requires the 'Create public threads' permission in the destination channel.*
 
     **Method 1: Using the target message's ID**
     `{LISTEN_TO}[messageID] [optional multi-move] [#targetChannelOrThread] [optional message]`
