@@ -419,7 +419,7 @@ if bot.user and bot.user.name:
     bot_name = bot.user.name
 
 async def random_thread_name():
-    return bot_name + " " + ' '.join([ random.choice(some_words) for x in range(3) ])
+    return ' '.join([ random.choice(some_words) for x in range(2) ]) + ' ' + bot_name
 
 def as_channel_id(text: str):
     if text.startswith('<'):
