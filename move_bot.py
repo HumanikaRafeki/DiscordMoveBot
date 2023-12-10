@@ -267,6 +267,7 @@ async def get_pref(guild_id, pref, override):
 async def update_pref(guild_id, pref, value): #This needs to be it's own function so that it can be `async`
     if guild_id not in prefs:
         prefs[guild_id] = copy.deepcopy(available_prefs)
+        prefs[guild_id][pref] = value
         async with asqlite.connect(DB_PATH) as connection:
             async with connection.cursor() as cursor:
                 await cursor.execute(f"INSERT OR IGNORE INTO prefs VALUES (?, ?, ?, ?, ?, ?)", (int(guild_id),prefs[guild_id]["notify_dm"], prefs[guild_id]["embed_message"], prefs[guild_id
@@ -274,26 +275,10 @@ async def update_pref(guild_id, pref, value): #This needs to be it's own functio
                 await cursor.close()
                 await connection.commit()
     else:
-        async with asqlite.connect(DB_PATH) as connection:
-            async with connection.cursor() as cursor:
-                sql = f"UPDATE prefs SET {pref} = {value} WHERE guild_id = {int(guild_id)}"
-                await cursor.execute(sql)
-                await cursor.close()
-                await connection.commit()
-    prefs[guild_id][pref] = value
-
-async def update_move_msg_pref(guild_id, moved_message):
-    mm = ""
-    for word in moved_message:
-        mm += word
-    prefs[guild_id]["move_message"] = mm
-    if guild_id not in prefs:
-        prefs[guild_id] = []
         prefs[guild_id][pref] = value
         async with asqlite.connect(DB_PATH) as connection:
             async with connection.cursor() as cursor:
-                sql = f"UPDATE prefs SET move_message = {mm} where guild_id = {int(guild_id)}"
-                await cursor.execute(sql)
+                await cursor.execute(f"UPDATE prefs SET {pref} = ? WHERE guild_id = {int(guild_id)}", (value,))
                 await cursor.close()
                 await connection.commit()
 
@@ -561,13 +546,15 @@ async def on_message(msg_in):
         elif params[3] == "?":
             response_msg = pref_help[params[2]]
         elif params[2] == "move_message":
+            await update_pref(guild_id, 'move_message', ' '.join(params[3:]))
             title = "Move Message Updated"
-            response_msg = f"**Preference:** `move_message` was updated"
-            await update_move_msg_pref(guild_id, params[2:])
+            result = await get_pref(guild_id, "move_message", {})
+            response_msg = f"**Preference:** `{params[2]}` Updated to `{result}`"
         else:
             await update_pref(int(guild_id), params[2], params[3])
             title = "Preferences Updated"
-            response_msg = f"**Preference:** `{params[2]}` Updated to `{params[3]}`"
+            result = await get_pref(guild_id, params[2], {})
+            response_msg = f"**Preference:** `{params[2]}` Updated to `{result}`"
         e = discord.Embed(title=title, description = response_msg)
         async with send_obj.typing():
             await send_obj.send(embed=e)
