@@ -788,7 +788,7 @@ async def copy_messages(aborter, before_messages, moved_msg, after_messages, msg
             if guild is None:
                 guild = msg.guild
 
-            msg_content = msg.content or msg.system_content or '*(empty message)*'
+            msg_content = msg.content or msg.system_content or '\u2060'
             if strip_ping == 1 and '@' in msg.content:
                 msg_content = msg_content.replace('@', '@\u200b')
 
