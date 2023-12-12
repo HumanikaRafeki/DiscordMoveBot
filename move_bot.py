@@ -516,11 +516,6 @@ async def on_message(msg_in):
 
     # !mv reset
     elif params[1] == "reset":
-        if not msg_in.author.guild_permissions.administrator:
-            send_channel = mod_channel if mod_channel else txt_channel
-            await send_channel.send(f"Refusing request from <@!{msg_in.author.id}> to reset preferences because they're not an administrator.")
-            await msg_in.add_reaction("🚫")
-            return
         if guild_id in prefs:
             prefs.pop(guild_id)
         async with msg_in.author.typing():
@@ -536,11 +531,6 @@ async def on_message(msg_in):
         if len(params) == 2 or params[2] == "?":
             response_msg = pref_help_description
             send_obj = msg_in.author
-        elif not msg_in.author.guild_permissions.administrator:
-            send_channel = mod_channel if mod_channel else txt_channel
-            await send_channel.send(f"Refusing request from <@!{msg_in.author.id}> to change preferences because they're not an administrator.")
-            await msg_in.add_reaction("🚫")
-            return
         elif len(params) > 2 and params[2] not in available_prefs:
             title = "Invalid Preference"
             response_msg = f"Preference name \"{params[2]}\" is invalid.\nType `{LISTEN_TO}pref ?` for help."
