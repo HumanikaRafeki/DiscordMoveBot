@@ -389,6 +389,12 @@ help_description = f"""
     `{LISTEN_TO}-3 #general This message and the 3 before it belongs in general.`
     `{LISTEN_TO}~964656189155737640 #general This message until 964656189155737640 belongs in general.`
 
+    **Method 3: Move all messages in a thread to a new thread**
+    `{LISTEN_TO}#sourceThread #targetChannel [optional message]`
+
+    **examples:**
+    `{LISTEN_TO}#UglyBabyPictures #general Moves all messages in the #UglyBabyPictures thread to a new thread by that name in #general`
+
     **Options:**
     You specify custom behaviors by putting / options after the `{LISTEN_TO}`. These will override the preferences described below.
     `{LISTEN_TO}/delete` Delete the original messages (ie. move them)
@@ -788,7 +794,7 @@ async def copy_messages(aborter, before_messages, moved_msg, after_messages, msg
             if guild is None:
                 guild = msg.guild
 
-            msg_content = msg.content or msg.system_content or '\u2060'
+            msg_content = msg.content or msg.system_content or '\u200b'
             if strip_ping == 1 and '@' in msg.content:
                 msg_content = msg_content.replace('@', '@\u200b')
 
