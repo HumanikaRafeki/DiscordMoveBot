@@ -10,6 +10,7 @@
 ########################################
 
 from concurrent.futures import thread
+import re
 import os
 import io
 import json
@@ -135,8 +136,10 @@ pref_help = {
     "strip_ping": f"""
 **name:** `strip_ping`
 **value:**
+Rewrites `@pings` so Discord won't ping anyone.
 `0` Do not strip pings
-`1` Strip 'everyone' and 'here' pings
+`1` Turn pings into `@ Name(id)` where ` ` is a zero-width space
+`2` Old-style ping stripper which results in `<@ 12345>` or `<@ &12345>`
 
 **example:**
 `{LISTEN_TO}pref strip_ping 1`
@@ -344,6 +347,7 @@ async def make_prefs_from(send_obj, opts):
         elif opt == '/embed':      override['embed_message'] = 1
         elif opt == '/no-strip':   override['strip_ping'] = 0
         elif opt == '/strip':      override['strip_ping'] = 1
+        elif opt == '/oldstrip':   override['strip_ping'] = 2
         elif opt == '/keep':       override['delete_original'] = 0
         elif opt == '/no-delete':  override['delete_original'] = 0
         elif opt == '/delete':     override['delete_original'] = 1
@@ -763,6 +767,54 @@ async def find_target_channel(msg_in, dest_channel, mod_channel):
 
         return target_channel
 
+async def find_name_of_snowflake(guild, snowflakeId: str, snowflakes: hash, role: bool):
+        intId = 0
+        try:
+            intId = int(snowflakeId, 10)
+        except(ValueError, TypeError):
+            name = 'InvalidId'
+            snowflakes[snowflakeId] = name
+            return name
+
+        if role:
+            for role in guild.roles:
+                if role.id == intId:
+                    name = role.name or 'NamelessRole'
+                    snowflakes[snowflakeId] = name
+                    return name
+
+        # If it's not a role, it must be a member.
+        if not role:
+            member = await guild.fetch_member(intId)
+            if member:
+                name = member.name or 'UnnamedUser'
+                snowflakes[snowflakeId] = name
+                return name
+
+        name = 'Unknown'
+        snowflakes[snowflakeId] = name
+        return name
+
+async def strip_pings(guild, msg_content: str, snowflakes: hash):
+        """Does the first step of ping stripping, turning `<...id...>` into `@Name(id)`"""
+        parts = re.split("(<?@&?[0-9]+>?)", msg_content)
+        for i in range(1, len(parts), 2):
+            part = parts[i]
+            i1 = 1 if part.startswith('<') else 0
+            i2 = -1 if part.endswith('>') else len(part)
+            if part[i1 + 1] == '&':
+                i1 += 2
+                role = True
+            else:
+                i1 += 1
+                role = False
+            snowflakeId = part[i1:i2]
+            print(f"part {i} part='{part}' i1={i1} i2={i2} role={role!r} id='{snowflakeId}")
+            name = snowflakes.get(snowflakeId, None) \
+                or await find_name_of_snowflake(guild, snowflakeId, snowflakes, role)
+            parts[i] = f'@{name}({"role " if role else ""}{snowflakeId})'
+        return ''.join(parts)
+
 async def copy_messages(aborter, before_messages, moved_msg, after_messages, msg_in, target_channel, override, make_thread_named: str, delete_original):
         webhook_name = f'MoveBot {BOT_ID}'
         guild_id = msg_in.guild.id
@@ -785,6 +837,7 @@ async def copy_messages(aborter, before_messages, moved_msg, after_messages, msg
         strip_ping = int(await get_pref(guild_id, "strip_ping", override))
         moved = []
         failed = []
+        snowflakes = {}
         guild = None
         make_thread = not not make_thread_named
         send_sleeper = Sleeper(SEND_SLEEP_TIME)
@@ -795,7 +848,9 @@ async def copy_messages(aborter, before_messages, moved_msg, after_messages, msg
                 guild = msg.guild
 
             msg_content = msg.content or msg.system_content or '\u200b'
-            if strip_ping == 1 and '@' in msg.content:
+            if strip_ping > 0 and '@' in msg.content:
+                if strip_ping == 1:
+                    msg_content = await strip_pings(msg_in.guild, msg_content, snowflakes)
                 msg_content = msg_content.replace('@', '@\u200b')
 
             files = []
