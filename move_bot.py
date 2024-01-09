@@ -779,17 +779,24 @@ async def find_name_of_snowflake(guild, snowflakeId: str, snowflakes: hash, role
         if role:
             for role in guild.roles:
                 if role.id == intId:
-                    name = role.name or 'NamelessRole'
+                    name = role.name or 'UnknownRole'
                     snowflakes[snowflakeId] = name
                     return name
 
         # If it's not a role, it must be a member.
         if not role:
-            member = await guild.fetch_member(intId)
-            if member:
-                name = member.name or 'UnnamedUser'
-                snowflakes[snowflakeId] = name
-                return name
+            try:
+                member = await guild.fetch_member(intId)
+            except discord.DiscordException as de:
+                member = None
+            if not member:
+                try:
+                    member = await bot.fetch_user(intId)
+                except discord.DiscordException as de:
+                    member = 'UnknownUser'
+            name = member.name or 'UnnamedUser'
+            snowflakes[snowflakeId] = name
+            return name
 
         name = 'Unknown'
         snowflakes[snowflakeId] = name
@@ -797,19 +804,12 @@ async def find_name_of_snowflake(guild, snowflakeId: str, snowflakes: hash, role
 
 async def strip_pings(guild, msg_content: str, snowflakes: hash):
         """Does the first step of ping stripping, turning `<...id...>` into `@Name(id)`"""
-        parts = re.split("(<?@&?[0-9]+>?)", msg_content)
+        parts = re.split("(<?@[!&]*[0-9]+>?)", msg_content)
         for i in range(1, len(parts), 2):
             part = parts[i]
-            i1 = 1 if part.startswith('<') else 0
-            i2 = -1 if part.endswith('>') else len(part)
-            if part[i1 + 1] == '&':
-                i1 += 2
-                role = True
-            else:
-                i1 += 1
-                role = False
-            snowflakeId = part[i1:i2]
-            print(f"part {i} part='{part}' i1={i1} i2={i2} role={role!r} id='{snowflakeId}")
+            role = part.find('&') >= 0
+            snowflakeId = part.strip("<>@!&")
+            print(f"part {i} part='{part}' role={role!r} id='{snowflakeId}'")
             name = snowflakes.get(snowflakeId, None) \
                 or await find_name_of_snowflake(guild, snowflakeId, snowflakes, role)
             parts[i] = f'@{name}({"role " if role else ""}{snowflakeId})'
