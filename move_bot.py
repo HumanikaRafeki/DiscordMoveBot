@@ -767,7 +767,7 @@ async def find_target_channel(msg_in, dest_channel, mod_channel):
 
         return target_channel
 
-async def find_member_name(intId: int):
+async def find_member_name(guild, intId: int):
         try:
             member = await guild.fetch_member(intId)
             if member and member.name:
@@ -783,7 +783,7 @@ async def find_member_name(intId: int):
             pass
         return 'UnnamedUser'
 
-async def find_role_name(intId: int):
+async def find_role_name(guild, intId: int):
         for role in guild.roles:
             if role.id == intId and role.name:
                 return role.name
@@ -798,10 +798,10 @@ async def find_name_of_snowflake(guild, snowflakeId: str, snowflakes: hash, role
             name = 'InvalidId'
 
         if role and not name:
-            name = await find_role_name(intId)
+            name = await find_role_name(guild, intId)
 
         if not role and not name:
-            name = await find_member_name(intId)
+            name = await find_member_name(guild, intId)
 
         if not name:
             name = 'UnknownId'
