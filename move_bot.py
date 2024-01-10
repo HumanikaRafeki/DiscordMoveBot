@@ -767,38 +767,45 @@ async def find_target_channel(msg_in, dest_channel, mod_channel):
 
         return target_channel
 
+async def find_member_name(intId: int):
+        try:
+            member = await guild.fetch_member(intId)
+            if member and member.name:
+                return member.name
+        except discord.DiscordException as de:
+            pass
+
+        try:
+            member = await bot.fetch_user(intId)
+            if member and member.name:
+                return member.name
+        except discord.DiscordException as de:
+            pass
+        return 'UnnamedUser'
+
+async def find_role_name(intId: int):
+        for role in guild.roles:
+            if role.id == intId and role.name:
+                return role.name
+        return 'UnknownRole'
+        
 async def find_name_of_snowflake(guild, snowflakeId: str, snowflakes: hash, role: bool):
+        name = None
         intId = 0
         try:
             intId = int(snowflakeId, 10)
         except(ValueError, TypeError):
             name = 'InvalidId'
-            snowflakes[snowflakeId] = name
-            return name
 
-        if role:
-            for role in guild.roles:
-                if role.id == intId:
-                    name = role.name or 'UnknownRole'
-                    snowflakes[snowflakeId] = name
-                    return name
+        if role and not name:
+            name = await find_role_name(intId)
 
-        # If it's not a role, it must be a member.
-        if not role:
-            try:
-                member = await guild.fetch_member(intId)
-            except discord.DiscordException as de:
-                member = None
-            if not member:
-                try:
-                    member = await bot.fetch_user(intId)
-                except discord.DiscordException as de:
-                    member = 'UnknownUser'
-            name = member.name or 'UnnamedUser'
-            snowflakes[snowflakeId] = name
-            return name
+        if not role and not name:
+            name = await find_member_name(intId)
 
-        name = 'Unknown'
+        if not name:
+            name = 'UnknownId'
+
         snowflakes[snowflakeId] = name
         return name
 
