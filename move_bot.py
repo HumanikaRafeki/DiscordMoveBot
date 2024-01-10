@@ -811,7 +811,7 @@ async def find_name_of_snowflake(guild, snowflakeId: str, snowflakes: hash, role
 
 async def strip_pings(guild, msg_content: str, snowflakes: hash):
         """Does the first step of ping stripping, turning `<...id...>` into `@Name(id)`"""
-        parts = re.split("(<?@[!&]*[0-9]+>?)", msg_content)
+        parts = re.split("(<@[!&]*[0-9]+>)", msg_content)
         for i in range(1, len(parts), 2):
             part = parts[i]
             role = part.find('&') >= 0
