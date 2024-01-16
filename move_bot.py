@@ -283,6 +283,14 @@ async def update_pref(guild_id, pref, value): #This needs to be it's own functio
                 await connection.commit()
 
 async def reset_prefs(guild_id):
+    try:
+        prefs.pop(guild_id)
+    except KeyError:
+        pass
+    try:
+        prefs.pop(int(guild_id))
+    except KeyError:
+        pass
     async with asqlite.connect(DB_PATH) as connection:
         async with connection.cursor() as cursor:
             sql = f"DELETE FROM prefs WHERE guild_id = {int(guild_id)}"
@@ -470,6 +478,8 @@ async def on_guild_remove(guild):
             "guilds": len(bot.guilds)
         })
         requests.request("POST", url, headers=headers, data=payload)
+
+    await reset_prefs(guild.id)
 
     if admin:
         notify_me = f'MoveBot was removed from {guild.name} ({guild.member_count} members)! Currently in {len(bot.guilds)} servers.'
