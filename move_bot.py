@@ -471,6 +471,12 @@ async def on_guild_remove(guild):
         })
         requests.request("POST", url, headers=headers, data=payload)
 
+    async with asqlite.connect(DB_PATH) as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute(f"DELETE * FROM prefs WHERE guild_id = {guild.id}")
+                await cursor.close()
+                await connection.commit()
+
     if admin:
         notify_me = f'MoveBot was removed from {guild.name} ({guild.member_count} members)! Currently in {len(bot.guilds)} servers.'
         await admin.send(notify_me)
