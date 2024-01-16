@@ -473,7 +473,7 @@ async def on_guild_remove(guild):
 
     async with asqlite.connect(DB_PATH) as connection:
             async with connection.cursor() as cursor:
-                await cursor.execute(f"DELETE * FROM prefs WHERE guild_id = {guild.id}")
+                await cursor.execute(f"DELETE FROM prefs WHERE guild_id = {guild.id}")
                 await cursor.close()
                 await connection.commit()
 
