@@ -130,7 +130,7 @@ pref_help = {
 **variables:** `MESSAGE_USER`, `DESTINATION_CHANNEL`, `MOVER_USER`
 
 **example:**
-`{LISTEN_TO}pref send_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`""",
+`{LISTEN_TO}pref move_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`""",
 
     "strip_ping": f"""
 **name:** `strip_ping`
