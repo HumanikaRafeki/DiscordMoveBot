@@ -130,7 +130,7 @@ pref_help = {
 **variables:** `MESSAGE_USER`, `DESTINATION_CHANNEL`, `MOVER_USER`
 
 **example:**
-`{LISTEN_TO}pref send_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`""",
+`{LISTEN_TO}pref move_message MESSAGE_USER, your message belongs in DESTINATION_CHANNEL and was moved by MOVER_USER`""",
 
     "strip_ping": f"""
 **name:** `strip_ping`
@@ -753,6 +753,8 @@ async def fetch_other_messages(aborter, is_reply, msg_in, params, moved_msg, sou
         return ( extra_message, before_messages, after_messages, dest_channel )
 
 async def find_target_channel(msg_in, dest_channel, mod_channel):
+        # Adding missing `txt_channel` declaration 01/27/24 @sadpuppies
+        txt_channel = msg_in.channel
         try:
             target_channel = msg_in.guild.get_channel_or_thread(int(dest_channel.strip('<#').strip('>')))
         except Exception as exc:
