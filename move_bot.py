@@ -753,6 +753,8 @@ async def fetch_other_messages(aborter, is_reply, msg_in, params, moved_msg, sou
         return ( extra_message, before_messages, after_messages, dest_channel )
 
 async def find_target_channel(msg_in, dest_channel, mod_channel):
+        # Adding missing `txt_channel` declaration 01/27/24 @sadpuppies
+        txt_channel = msg_in.channel
         try:
             target_channel = msg_in.guild.get_channel_or_thread(int(dest_channel.strip('<#').strip('>')))
         except Exception as exc:
